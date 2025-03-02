@@ -1,0 +1,2 @@
+fn foo(a:num, c:bool) -> bool;
+fn bar() -> num
