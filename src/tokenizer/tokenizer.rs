@@ -1,5 +1,5 @@
 use super::{Location, Span, Token, TokenKind};
-use crate::{assembler_errors::ASMError, interner::intern};
+use crate::{assembler_errors::ASMError, error_printing::print_error, interner::intern};
 use eyre::Result;
 use std::str;
 
@@ -55,8 +55,13 @@ impl Lexer {
 
   /// Returns the next char in the `src`.
   #[inline(always)]
-  fn next_char(&self,) -> char {
-    self.src[self.next]
+  fn peek_next_char(&self,) -> Option<char,> {
+    if self.next < self.src.len() {
+      Some(self.src[self.next],)
+    }
+    else {
+      None
+    }
   }
 
   /// Eat the current [`char`].
@@ -77,64 +82,6 @@ impl Lexer {
     self.current_char = self.src[self.current];
   }
 
-  /// Check whether the next character in `src` satisfies the function `f`.
-  fn next_char_satisfies<F,>(&self, f:F,) -> bool
-  where F: Fn(char,) -> bool {
-    f(self.next_char(),)
-  }
-
-  ///If the current `current_char` is a math symbol ('+','-','*','/') determine
-  /// whether it is part of a `_=` [`TokenKind`] and return the [`Token`].
-  fn tokenize_math_sym(&mut self,) -> Result<Token,> {
-    // Fix how these sort of merge symbols are tokenized. Right now it counts
-    // them as one char and assigns them a 1 len span but they should have a
-    // 2 len span
-    let kind = if self.next_char() == ' ' {
-      match self.current_char {
-        '+' => TokenKind::Plus,
-        '-' => TokenKind::Minus,
-        '*' => TokenKind::Star,
-        '/' => TokenKind::Slash,
-        _ => unreachable!(),
-      }
-    }
-    else {
-      // Confirm the next character is an '='
-      if self.next_char() != '=' {
-        return Err(
-          ASMError::IllegalMathToken {
-            current:self.current_char,
-            next:self.next_char(),
-          }
-          .into(),
-        );
-      }
-
-      match self.current_char {
-        '+' => TokenKind::PlusEqual,
-        '-' => TokenKind::MinusEqual,
-        '*' => TokenKind::StarEqual,
-        '/' => TokenKind::SlashEqual,
-        _ => unreachable!(),
-      }
-    };
-
-    let start = self.loc();
-    self.eat_current();
-    let end = self.loc();
-    self.eat_current();
-
-    let token = Token {
-      kind,
-      span:Span { start, end, },
-    };
-
-    // This is needed so the current char is not white space?
-    self.eat_current();
-
-    return Ok(token,);
-  }
-
   /// If the current char is a '$' parses the numbers following it as a
   /// [TokenKind::Register].
   fn tokenize_register(&mut self,) -> Result<Token,> {
@@ -153,8 +100,6 @@ impl Lexer {
 
   /// Use the current char as the basis of the next token.
   fn next_token(&mut self,) -> Result<Token,> {
-    self.skip_whitespace();
-
     // Finish lexing if there are no more characters left
     if self.current_char == NULL_CHAR {
       return Ok(Token {
@@ -172,7 +117,7 @@ impl Lexer {
       '[' => Some(TokenKind::LBracket,),
       ']' => Some(TokenKind::RBracket,),
       '=' => Some(TokenKind::EqualSign,),
-      '+' | '-' | '*' | '/' => return self.tokenize_math_sym(),
+      // '+' | '-' | '*' | '/' => return self.tokenize_math_sym(),
       // Catch a raw register declaration
       '$' => return self.tokenize_register(),
       _ => None,
@@ -211,16 +156,6 @@ impl Lexer {
         "MUL" => TokenKind::Mul,
         "DIV" => TokenKind::Div,
         "POW" => TokenKind::Pow,
-        "ADDRI" => TokenKind::AddRI,
-        "SUBRI" => TokenKind::SubRI,
-        "MULRI" => TokenKind::MulRI,
-        "DIVRI" => TokenKind::DivRI,
-        "POWRI" => TokenKind::PowRI,
-        "ADDRR" => TokenKind::AddRR,
-        "SUBRR" => TokenKind::SubRR,
-        "MULRR" => TokenKind::MulRR,
-        "DIVRR" => TokenKind::DivRR,
-        "POWRR" => TokenKind::PowRR,
         "IF" => TokenKind::If,
         "ELSE" => TokenKind::Else,
         "FN" => TokenKind::Fn,
@@ -228,10 +163,6 @@ impl Lexer {
         "WHILE" => TokenKind::While,
         "FOR" => TokenKind::For,
         "IN" => TokenKind::In,
-        "EQRI" => TokenKind::EqRI,
-        "GTRI" => TokenKind::GtRI,
-        "EQRR" => TokenKind::EqRR,
-        "GTRR" => TokenKind::GtRR,
         "EQ" => TokenKind::Eq,
         "GT" => TokenKind::Gt,
         "LT" => TokenKind::Lt,
@@ -319,10 +250,9 @@ impl Lexer {
 
     // If this point is reached throw an error
     let loc = self.loc();
-    panic!(
-      "{}",
-      ASMError::UnrecognizedToken(&self.current_char.to_string(), loc.ln, loc.col)
-    )
+    let err_char = self.current_char.to_string();
+    self.eat_current();
+    Err(ASMError::UnrecognizedToken(err_char, loc,).into(),)
   }
 
   /// Eats characters as long as the current character satisfies the predicate.
@@ -356,6 +286,12 @@ impl Lexer {
     }
   }
 
+  /// Checks whether the `current_char` is the beginning of a comment.
+  fn is_comment(&self,) -> bool {
+    // Check if current character is a '/'
+    self.current_char == '/' && self.peek_next_char().map_or(false, |ch| ch == '/',)
+  }
+
   /// Consume characters until the current character does not have the
   /// [`White_Space`](https://www.unicode.org/reports/tr31/) property.
   fn skip_whitespace(&mut self,) {
@@ -368,9 +304,11 @@ impl Lexer {
 
     'tokenize: loop {
       // Check if the line is a comment and skip the line if so
-      if self.current_char == '/' && self.next_char_satisfies(|ch| ch == '/',) {
+      self.skip_whitespace();
+      if self.is_comment() {
         // Skip the line by eating all the characters until a line break is encountered
         self.eat_while(|ch| ch != '\n',);
+        continue 'tokenize;
       }
       match self.next_token() {
         Ok(token,) if token.kind == TokenKind::Eof => {
@@ -382,9 +320,10 @@ impl Lexer {
       }
     }
 
-    if errs.len() != 0 {
-      // Print the errors if they exist
-      // Should panic after printing them all
+    for err in errs {
+      let src = String::from_iter(&self.src,);
+      let err = err.downcast::<ASMError>().unwrap();
+      print_error(&src, err,);
     }
 
     tokens
@@ -499,8 +438,6 @@ mod test {
 
     assert_eq!(tokens[1].kind, TokenKind::Num(5.6));
     assert_eq!(tokens[1].span, Span::new([6, 1, 7], [8, 1, 9]));
-
-    dbg!("4.4".parse::<f32>().unwrap());
   }
 
   #[test]
@@ -517,7 +454,7 @@ mod test {
   #[test]
   fn test_tokenize() {
     let src =
-      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\galaxy-macro-asm\\src\\test_tokens.txt");
+      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\galaxy-macro-asm\\src\\test_tokens.spdr");
 
     let mut lex = Lexer::new(src,);
 
@@ -577,17 +514,33 @@ mod test {
     assert_eq!(tokens[17].kind, TokenKind::LCurlyBracket);
     assert_eq!(tokens[17].span, Span::new([62, 5, 18], [62, 5, 18]));
 
-    assert_eq!(tokens[18].kind, TokenKind::Identifier(0));
+    assert_eq!(tokens[18].kind, TokenKind::Add);
     assert_eq!(tokens[18].span, Span::new([67, 6, 3], [69, 6, 5]));
 
-    assert_eq!(tokens[19].kind, TokenKind::PlusEqual);
-    assert_eq!(tokens[19].span, Span::new([71, 6, 7], [72, 6, 8]));
+    assert_eq!(tokens[19].kind, TokenKind::Identifier(0));
+    assert_eq!(tokens[19].span, Span::new([71, 6, 7], [73, 6, 9]));
 
-    assert_eq!(tokens[20].kind, TokenKind::Num(90.0));
-    assert_eq!(tokens[20].span, Span::new([74, 6, 10], [75, 6, 11]));
+    assert_eq!(tokens[20].kind, TokenKind::Identifier(0));
+    assert_eq!(tokens[20].span, Span::new([75, 6, 11], [77, 6, 13]));
 
-    assert_eq!(tokens[21].kind, TokenKind::RCurlyBracket);
-    assert_eq!(tokens[21].span, Span::new([78, 7, 1], [78, 7, 1]));
+    assert_eq!(tokens[21].kind, TokenKind::Num(90.0));
+    assert_eq!(tokens[21].span, Span::new([79, 6, 15], [80, 6, 16]));
+
+    assert_eq!(tokens[22].kind, TokenKind::RCurlyBracket);
+    assert_eq!(tokens[22].span, Span::new([83, 7, 1], [83, 7, 1]));
+  }
+
+  #[test]
+  fn test_error_printing() {
+    // Something causes it to run forever if there is an error
+    // My hunch is for some reason it never moves past the incorrect token
+    let src = include_str!(
+      "C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\galaxy-macro-asm\\src\\spdr_error_test.spdr"
+    );
+    let mut lex = Lexer::new(src,);
+    let _ = lex.tokenize();
+
+    unimplemented!("Figure out how to compare the outputs for equality");
   }
 
   impl Span {
@@ -605,10 +558,5 @@ mod test {
         },
       }
     }
-  }
-
-  #[test]
-  fn test_error_printing() {
-    unimplemented!()
   }
 }

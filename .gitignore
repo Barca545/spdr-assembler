@@ -1,1 +1,5 @@
 /target
+*.hd
+*.txt
+*.spdr
+.vscode

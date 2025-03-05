@@ -24,6 +24,12 @@ pub struct Location {
   pub(crate) col:u16,
 }
 
+impl Display for Location {
+  fn fmt(&self, f:&mut std::fmt::Formatter<'_,>,) -> std::fmt::Result {
+    write!(f, "(idx:{}, ln:{}, col:{})", self.idx, self.ln, self.col)
+  }
+}
+
 #[derive(PartialEq, Clone, Copy,)]
 pub enum TokenKind {
   LCurlyBracket,
@@ -68,20 +74,6 @@ pub enum TokenKind {
   Mul,
   Div,
   Pow,
-  AddRI,
-  SubRI,
-  MulRI,
-  DivRI,
-  PowRI,
-  AddRR,
-  SubRR,
-  MulRR,
-  DivRR,
-  PowRR,
-  EqRI,
-  GtRI,
-  EqRR,
-  GtRR,
   Not,
   Jmp,
   Jnz,
@@ -129,16 +121,6 @@ impl Display for TokenKind {
       Self::Mul => write!(f, "Mul"),
       Self::Div => write!(f, "Div"),
       Self::Pow => write!(f, "Pow"),
-      Self::AddRI => write!(f, "AddRI"),
-      Self::SubRI => write!(f, "SubRI"),
-      Self::MulRI => write!(f, "MulRI"),
-      Self::DivRI => write!(f, "DivRI"),
-      Self::PowRI => write!(f, "PowRI"),
-      Self::AddRR => write!(f, "AddRR"),
-      Self::SubRR => write!(f, "SubRR"),
-      Self::MulRR => write!(f, "MulRR"),
-      Self::DivRR => write!(f, "DivRR"),
-      Self::PowRR => write!(f, "PowRR"),
       Self::Not => write!(f, "Not"),
       Self::Eq => write!(f, "Eq"),
       Self::Gt => write!(f, "Gt"),
@@ -158,10 +140,6 @@ impl Display for TokenKind {
       Self::Label(arg0,) => write!(f, "Label({})", &lookup(*arg0)),
       Self::Range { start, end, } => write!(f, "Range({start}..{end})"),
       Self::In => write!(f, "In"),
-      Self::EqRI => write!(f, "EqRI"),
-      Self::GtRI => write!(f, "GtRI"),
-      Self::EqRR => write!(f, "EqRR"),
-      Self::GtRR => write!(f, "GtRR"),
       Self::Jmp => write!(f, "Jmp"),
       Self::Jnz => write!(f, "Jnz"),
       Self::Call => write!(f, "Call"),
@@ -193,23 +171,16 @@ impl Token {
   pub fn unwrap_range(&self,) -> Result<(u32, u32,),> {
     match self.kind {
       TokenKind::Range { start, end, } => Ok((start, end,),),
-      _ => Err(ASMError::NotRange(self.kind, self.span.start.ln, self.span.start.col,).into(),),
+      _ => Err(ASMError::NotRange(self.kind, self.span.start,).into(),),
     }
   }
 
-  /// Return a result containing the idx of an [`TokenKind::Identifier`].
-  pub fn unwrap_ident(&self,) -> Result<u32,> {
+  /// Return the current [`Token`] as an `Option` containing the idx of an
+  /// [`TokenKind::Identifier`].
+  pub fn unwrap_ident(&self,) -> Option<u32,> {
     match self.kind {
-      TokenKind::Identifier(idx,) => Ok(idx,),
-      _ => Err(ASMError::NotRegisterOrIdent(self.kind, self.span.start.ln, self.span.start.col,).into(),),
-    }
-  }
-
-  /// Return a result containing the idx of an [`TokenKind::Bool`].
-  pub fn unwrap_bool(&self,) -> Result<bool,> {
-    match self.kind {
-      TokenKind::Bool(b,) => Ok(b,),
-      _ => Err(ASMError::NotRegisterOrIdent(self.kind, self.span.start.ln, self.span.start.col,).into(),),
+      TokenKind::Identifier(idx,) => Some(idx,),
+      _ => None,
     }
   }
 }

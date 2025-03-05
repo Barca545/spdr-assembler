@@ -1,6 +1,10 @@
+use spdr_isa::program::Program;
 use std::cell::OnceCell;
 
-use spdr_isa::program::Program;
+// Refactor:
+// - Possible the patch reserve only needs to take in the program and not the
+//   len separate from the program. I need to wait to get it working to see if
+//   it truly over needs program.len()
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash,)]
 ///A replacement for [`Range`](std::ops::Range) which implements [`Copy`].

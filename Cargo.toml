@@ -1,5 +1,5 @@
 [package]
-name = "galaxy-macro-asm"
+name = "spdr-assembler"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,10 @@ edition = "2021"
 
 [dependencies]
 eyre = "0.6.12"
-spdr_isa = {git = "https://github.com/Barca545/spdr_isa.git"}
+spdr_isa = {git = "https://github.com/Barca545/spdr_isa.git", rev = "cb2060c93b6fc7ea9195afb365e3ef0fe5946cbb"}
 thiserror = "2.0.11"
 
 [dev-dependencies]
+# galaxy = {git = "https://github.com/Barca545/galaxy.git"}
+
+[alias]

@@ -1,7 +1,0 @@
-var foo = 15
-if GT foo 14 {
-  call bar
-}
-else if LT foo 4 {
-  foo += 90
-}
