@@ -1,7 +1,7 @@
 use super::{Location, Span, Token, TokenKind};
 use crate::{assembler_errors::ASMError, error_printing::print_error, interner::intern};
 use eyre::Result;
-use std::str;
+use std::io::Write;
 
 // Refactor:
 // - See if the next_char_satisfies => eat_current sequence could be one
@@ -202,6 +202,8 @@ impl Lexer {
       if self.current_char == '.' {
         self.eat_current();
         // For a float, the period will be followed by a numeric char
+        // This is necesary because ch.is_numeric() will stop when it encounters a '.'
+        // in a float
         if self.current_char.is_numeric() {
           let (end_num, end_span,) = self.eat_while(|ch| ch.is_numeric(),);
           num = format!("{num}.{end_num}");
@@ -249,10 +251,11 @@ impl Lexer {
     }
 
     // If this point is reached throw an error
-    let loc = self.loc();
-    let err_char = self.current_char.to_string();
-    self.eat_current();
-    Err(ASMError::UnrecognizedToken(err_char, loc,).into(),)
+    // Eat until whitespace is encountered. This is the error token.
+    let (token, span,) = self.eat_while(|ch| !ch.is_whitespace(),);
+    dbg!(&token);
+    // self.eat_current();
+    Err(ASMError::UnrecognizedToken { token, span, }.into(),)
   }
 
   /// Eats characters as long as the current character satisfies the predicate.
@@ -298,7 +301,7 @@ impl Lexer {
     self.eat_while(|ch| ch.is_whitespace(),);
   }
 
-  pub fn tokenize(&mut self,) -> Vec<Token,> {
+  pub fn tokenize<W:Write,>(&mut self, mut w:W,) -> Vec<Token,> {
     let mut tokens = Vec::new();
     let mut errs = Vec::new();
 
@@ -323,7 +326,7 @@ impl Lexer {
     for err in errs {
       let src = String::from_iter(&self.src,);
       let err = err.downcast::<ASMError>().unwrap();
-      print_error(&src, err,);
+      print_error(&mut w, &src, err,);
     }
 
     tokens
@@ -332,6 +335,8 @@ impl Lexer {
 
 #[cfg(test)]
 mod test {
+  use std::io;
+
   use super::Lexer;
   use crate::{
     interner::intern,
@@ -396,9 +401,7 @@ mod test {
   #[test]
   fn test_register_annotation() {
     let src = "$15";
-
-    let tokens = Lexer::new(src,).tokenize();
-
+    let tokens = Lexer::new(src,).tokenize(io::stdout(),);
     assert_eq!(tokens[0].kind, TokenKind::Register(15));
   }
 
@@ -406,7 +409,7 @@ mod test {
   fn test_comments() {
     let src = "// 15, 98, 70 \r\n70";
 
-    let tokens = Lexer::new(src,).tokenize();
+    let tokens = Lexer::new(src,).tokenize(io::stdout(),);
 
     assert_eq!(tokens.len(), 2);
     assert_eq!(tokens[0].kind, TokenKind::Num(70.0));
@@ -418,7 +421,7 @@ mod test {
     let src = "0..5 0..=17";
 
     let mut lex = Lexer::new(src,);
-    let tokens = lex.tokenize();
+    let tokens = lex.tokenize(io::stdout(),);
 
     assert_eq!(tokens[0].kind, TokenKind::Range { start:0, end:4 });
     assert_eq!(tokens[0].span, Span::new([0, 1, 1], [3, 1, 4]));
@@ -431,7 +434,7 @@ mod test {
   fn test_numbers() {
     let src = "97.65 5.6";
 
-    let tokens = Lexer::new(src,).tokenize();
+    let tokens = Lexer::new(src,).tokenize(io::stdout(),);
 
     assert_eq!(tokens[0].kind, TokenKind::Num(97.65));
     assert_eq!(tokens[0].span, Span::new([0, 1, 1], [4, 1, 5]));
@@ -445,7 +448,7 @@ mod test {
     let src = "label_test:";
 
     let mut lex = Lexer::new(src,);
-    let tokens = lex.tokenize();
+    let tokens = lex.tokenize(io::stdout(),);
 
     assert_eq!(tokens[0].kind, TokenKind::Label(intern("label_test")));
     assert_eq!(tokens[0].span, Span::new([0, 1, 1], [9, 1, 10]))
@@ -454,11 +457,11 @@ mod test {
   #[test]
   fn test_tokenize() {
     let src =
-      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\galaxy-macro-asm\\src\\test_tokens.spdr");
+      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test_tokens.spdr");
 
     let mut lex = Lexer::new(src,);
 
-    let tokens = lex.tokenize();
+    let tokens = lex.tokenize(io::stdout(),);
 
     assert_eq!(tokens[0].kind, TokenKind::Var);
     assert_eq!(tokens[0].span, Span::new([0, 1, 1], [2, 1, 3]));
@@ -531,16 +534,24 @@ mod test {
   }
 
   #[test]
-  fn test_error_printing() {
-    // Something causes it to run forever if there is an error
-    // My hunch is for some reason it never moves past the incorrect token
-    let src = include_str!(
-      "C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\galaxy-macro-asm\\src\\spdr_error_test.spdr"
-    );
+  fn tokenizer_errors_print() {
+    let src =
+      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\spdr_error_test.spdr");
     let mut lex = Lexer::new(src,);
-    let _ = lex.tokenize();
+    let mut out = Vec::new();
+    let _ = lex.tokenize(&mut out,);
 
-    unimplemented!("Figure out how to compare the outputs for equality");
+    let output = String::from_utf8(out,).unwrap();
+
+    let expected = format!(
+      "\x1b[93mUNRECOGNIZED TOKEN:\x1b[0m ';ytx' {} is not a legal token.\nSub $14 ;ytx\n--------\x1b[31m^^^^\x1b[0m\n",
+      Location { idx:8, ln:1, col:9, }
+    );
+
+    assert_eq!(&output, &expected);
+
+    // Just printing so ppl testing can get the vis
+    print!("{}", output);
   }
 
   impl Span {

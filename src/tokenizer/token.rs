@@ -36,14 +36,6 @@ pub enum TokenKind {
   RCurlyBracket,
   LBracket,
   RBracket,
-  Minus,
-  MinusEqual,
-  Plus,
-  PlusEqual,
-  Star,
-  StarEqual,
-  Slash,
-  SlashEqual,
   EqualSign,
   In,
   Const,
@@ -104,14 +96,6 @@ impl Display for TokenKind {
       Self::RCurlyBracket => write!(f, "RCurlyBracket"),
       Self::LBracket => write!(f, "LBracket"),
       Self::RBracket => write!(f, "RBracket"),
-      Self::Minus => write!(f, "Minus"),
-      Self::MinusEqual => write!(f, "MinusEqual"),
-      Self::Plus => write!(f, "Plus"),
-      Self::PlusEqual => write!(f, "PlusEqual"),
-      Self::Star => write!(f, "Star"),
-      Self::StarEqual => write!(f, "StarEqual"),
-      Self::Slash => write!(f, "Slash"),
-      Self::SlashEqual => write!(f, "SlashEqual"),
       Self::EqualSign => write!(f, "EqualSign"),
       Self::Load => write!(f, "Load"),
       Self::Const => write!(f, "Const"),
@@ -171,7 +155,7 @@ impl Token {
   pub fn unwrap_range(&self,) -> Result<(u32, u32,),> {
     match self.kind {
       TokenKind::Range { start, end, } => Ok((start, end,),),
-      _ => Err(ASMError::NotRange(self.kind, self.span.start,).into(),),
+      _ => Err(ASMError::NotRange { token:*self, }.into(),),
     }
   }
 

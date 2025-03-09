@@ -31,10 +31,10 @@ impl<'tcx,> Compiler<'tcx,> {
             kind: TokenKind::Leq,
           ..
           } => ((a <= b) as u32).to_le_bytes(),
-          other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start)),
+          other => panic!("{}", ASMError::InvalidComparison{ token: *other }),
         };
 
-        self.program.extend_from_slice(&[
+        self.main.extend_from_slice(&[
           OpCode::Load.into(),
           EQ as u8,
           result[0],
@@ -48,12 +48,12 @@ impl<'tcx,> Compiler<'tcx,> {
         let b = b.to_le_bytes();
         #[rustfmt::skip]
       match op {
-        Token { kind:TokenKind::Eq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Gt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Lt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Geq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Leq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
+        Token { kind:TokenKind::Eq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Gt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Lt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Geq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Leq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
+        other => panic!("{}", ASMError::InvalidComparison{token:*other})
       };
       }
       (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
@@ -62,12 +62,12 @@ impl<'tcx,> Compiler<'tcx,> {
         let b = b.to_le_bytes();
         #[rustfmt::skip]
       match op {
-        Token { kind:TokenKind::Eq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Gt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Lt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Geq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Leq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
+        Token { kind:TokenKind::Eq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Gt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Lt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Geq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
+        Token { kind:TokenKind::Leq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
+        other => panic!("{}", ASMError::InvalidComparison{token:*other})
       };
       }
       (TokenKind::Num(a,), TokenKind::Register(b,),) => {
@@ -76,12 +76,12 @@ impl<'tcx,> Compiler<'tcx,> {
         // Perform the check and invert the operation
         #[rustfmt::skip]
       match op {
-        Token { kind:TokenKind::Eq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Gt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Lt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Geq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Leq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
+        Token { kind:TokenKind::Eq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Gt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Lt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Geq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Leq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        other => panic!("{}", ASMError::InvalidComparison{token:*other})
       };
       }
       (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
@@ -91,24 +91,24 @@ impl<'tcx,> Compiler<'tcx,> {
         // Perform the check and invert the operation
         #[rustfmt::skip]
       match op {
-        Token { kind:TokenKind::Eq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Gt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Lt, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Geq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Leq, .. } => self.program.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
+        Token { kind:TokenKind::Eq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Gt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Lt, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Geq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        Token { kind:TokenKind::Leq, .. } => self.main.extend_from_slice(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+        other => panic!("{}", ASMError::InvalidComparison{token:*other})
       };
       }
       (TokenKind::Register(a,), TokenKind::Register(b,),) => {
         // If both are registers
         #[rustfmt::skip]
       match op {
-        Token { kind:TokenKind::Eq, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
-        Token { kind:TokenKind::Gt, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
-        Token { kind:TokenKind::Lt, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
-        Token { kind:TokenKind::Geq, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
-        Token { kind:TokenKind::Leq, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
+        Token { kind:TokenKind::Eq, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
+        Token { kind:TokenKind::Gt, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
+        Token { kind:TokenKind::Lt, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
+        Token { kind:TokenKind::Geq, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
+        Token { kind:TokenKind::Leq, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
+        other => panic!("{}", ASMError::InvalidComparison{token:*other})
       };
       }
       (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
@@ -117,12 +117,12 @@ impl<'tcx,> Compiler<'tcx,> {
         let b = self.ident_to_reg(b, token_b.span,);
         #[rustfmt::skip]
       match op {
-        Token { kind:TokenKind::Eq, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
-        Token { kind:TokenKind::Gt, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
-        Token { kind:TokenKind::Lt, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
-        Token { kind:TokenKind::Geq, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
-        Token { kind:TokenKind::Leq, .. } => self.program.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
+        Token { kind:TokenKind::Eq, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
+        Token { kind:TokenKind::Gt, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
+        Token { kind:TokenKind::Lt, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
+        Token { kind:TokenKind::Geq, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
+        Token { kind:TokenKind::Leq, .. } => self.main.extend_from_slice(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
+        other => panic!("{}", ASMError::InvalidComparison{token:*other})
       };
       }
       _ => unreachable!(),
@@ -131,6 +131,7 @@ impl<'tcx,> Compiler<'tcx,> {
 
   /// Compile a comparison expression (EQ, GT, LT, GEQ, LEQ). Return it as a
   /// program instead of modifying the currently compiled program in place.
+  #[rustfmt::skip]
   pub(super) fn compile_comparison_return(&mut self, op:&Token, token_a:&Token, token_b:&Token,) -> Program {
     match (token_a.kind, token_b.kind,) {
       (TokenKind::Num(a,), TokenKind::Num(b,),) => {
@@ -153,7 +154,7 @@ impl<'tcx,> Compiler<'tcx,> {
             kind: TokenKind::Leq,
           ..
           } => ((a <= b) as u32).to_le_bytes(),
-          other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start)),
+          other => panic!("{}", ASMError::InvalidComparison{token:*other}),
         };
 
         return Program::from(&[
@@ -167,85 +168,79 @@ impl<'tcx,> Compiler<'tcx,> {
       }
       (TokenKind::Register(a,), TokenKind::Num(b,),) => {
         // If a is a register and b is an immediate
-        let b = b.to_le_bytes();
-        #[rustfmt::skip]
-      match op {
-        Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
-      }
+        let b = b.to_le_bytes();    
+        match op {
+          Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
+          other => panic!("{}", ASMError::InvalidComparison{token:*other})
+        }
       }
       (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
         // If a is an identity and b is an immediate
         let a = self.ident_to_reg(a, token_a.span,);
         let b = b.to_le_bytes();
-        #[rustfmt::skip]
-      match op {
-        Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
-        Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
-      }
+        match op {
+          Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  a, b[0], b[1], b[2], b[3]]),
+          Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  a, b[0], b[1], b[2], b[3]]),
+          other => panic!("{}", ASMError::InvalidComparison{token:*other})
+        }
       }
       (TokenKind::Num(a,), TokenKind::Register(b,),) => {
         // If a is an immediate and b is a register
         let a = a.to_le_bytes();
         // Perform the check and invert the operation
-        #[rustfmt::skip]
-      match op {
-        Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
-      }
+        match op {
+          Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          other => panic!("{}", ASMError::InvalidComparison{token:*other})
+        }
       }
       (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
         // If a is an immediate and b is an identity
         let a = a.to_le_bytes();
         let b = self.ident_to_reg(b, token_b.span,);
         // Perform the check and invert the operation
-        #[rustfmt::skip]
-      match op {
-        Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
-      }
+        match op {
+          Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Eq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Gt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Lt.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Geq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRI.into(), CmpFlag::Leq.into(),  b, a[0], a[1], a[2], a[3], OpCode::Not.into(), EQ as u8, EQ as u8,]),
+          other => panic!("{}", ASMError::InvalidComparison{token:*other})
+        }
       }
       (TokenKind::Register(a,), TokenKind::Register(b,),) => {
         // If both are registers
-        #[rustfmt::skip]
-      match op {
-        Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
-        Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
-        Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
-        Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
-        Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
-      }
+        match op {
+          Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
+          Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
+          Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
+          Token { kind:TokenKind::Geq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
+          Token { kind:TokenKind::Leq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
+          other => panic!("{}", ASMError::InvalidComparison{token:*other})
+        }
       }
       (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
         // If both are identifiers
         let a = self.ident_to_reg(a, token_a.span,);
         let b = self.ident_to_reg(b, token_b.span,);
-        #[rustfmt::skip]
-      match op {
-        Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
-        Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
-        Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
-        Token { kind:TokenKind::Geq, .. } =>Program::from(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
-        Token { kind:TokenKind::Leq, .. } =>Program::from(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
-        other => panic!("{}", ASMError::InvalidComparison(other.kind, other.span.start))
-      }
+        match op {
+          Token { kind:TokenKind::Eq, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Eq.into(),  a, b,]),
+          Token { kind:TokenKind::Gt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Gt.into(),  a, b,]),
+          Token { kind:TokenKind::Lt, .. } => Program::from(&[OpCode::CmpRR.into(), CmpFlag::Lt.into(),  a, b,]),
+          Token { kind:TokenKind::Geq, .. } =>Program::from(&[OpCode::CmpRR.into(), CmpFlag::Geq.into(),  a, b,]),
+          Token { kind:TokenKind::Leq, .. } =>Program::from(&[OpCode::CmpRR.into(), CmpFlag::Leq.into(),  a, b,]),
+          other => panic!("{}", ASMError::InvalidComparison{token:*other})
+        }
       }
       (other_1, other_2,) => unreachable!("({},{}) are invalid", other_1, other_2),
     }
@@ -255,7 +250,7 @@ impl<'tcx,> Compiler<'tcx,> {
     let target = match target.kind {
       TokenKind::Register(reg,) => reg,
       TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent(target.kind, target.span.start),),
+      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
     };
 
     match (token_a.kind, token_b.kind,) {
@@ -264,7 +259,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // compilation
         let result = (a + b).to_le_bytes();
 
-        self.program.extend_from_slice(&[
+        self.main.extend_from_slice(&[
           OpCode::Load.into(),
           target,
           result[0],
@@ -277,7 +272,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // If a is an immediate value and b is a raw reg
         let a = a.to_le_bytes();
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::AddRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
@@ -285,14 +280,14 @@ impl<'tcx,> Compiler<'tcx,> {
         let a = a.to_le_bytes();
         let b = self.ident_to_reg(b, token_b.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::AddRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Register(a,), TokenKind::Num(b,),) => {
         // If a is a register and b is an immediate value
         let b = b.to_le_bytes();
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::AddRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
@@ -300,13 +295,13 @@ impl<'tcx,> Compiler<'tcx,> {
         let b = b.to_le_bytes();
         let a = self.ident_to_reg(a, token_a.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::AddRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Register(a,), TokenKind::Register(b,),) => {
         // If they are both registers
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::AddRR.into(), target, a, b,],)
       }
       (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
@@ -314,18 +309,19 @@ impl<'tcx,> Compiler<'tcx,> {
         let a = self.ident_to_reg(a, token_a.span,);
         let b = self.ident_to_reg(b, token_b.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::AddRR.into(), target, a, b,],)
       }
       _ => {}
     }
   }
 
+  #[rustfmt::skip]
   pub(super) fn compile_sub_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
     let target = match target.kind {
       TokenKind::Register(reg,) => reg,
       TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent(target.kind, target.span.start),),
+      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
     };
 
     match (token_a.kind, token_b.kind,) {
@@ -334,7 +330,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // compilation
         let result = (a - b).to_le_bytes();
 
-        self.program.extend_from_slice(&[
+        self.main.extend_from_slice(&[
           OpCode::Load.into(),
           target,
           result[0],
@@ -346,33 +342,29 @@ impl<'tcx,> Compiler<'tcx,> {
       (TokenKind::Num(a,), TokenKind::Register(b,),) => {
         // If a is an immediate value and b is a raw reg
         let a = a.to_le_bytes();
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::RvSubRI.into(), target, b, a[0], a[1], a[2], a[3],],);
+        self.main.extend_from_slice(&[OpCode::RvSubRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
         // If a is an immediate value and b is a variable
         let a = a.to_le_bytes();
         let b = self.ident_to_reg(b, token_b.span,);
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::RvSubRI.into(), target, b, a[0], a[1], a[2], a[3],],);
+        self.main.extend_from_slice(&[OpCode::RvSubRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Register(a,), TokenKind::Num(b,),) => {
         // If a is a register and b is an immediate value
         let b = b.to_le_bytes();
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::SubRI.into(),  target, a, b[0], b[1], b[2], b[3],],)
+        self.main.extend_from_slice(&[OpCode::SubRI.into(),  target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
         // If a is a variable and b is an immediate value
         let b = b.to_le_bytes();
         let a = self.ident_to_reg(a, token_a.span,);
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::SubRI.into(), target, a, b[0], b[1], b[2], b[3],],)
+        self.main.extend_from_slice(&[OpCode::SubRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Register(a,), TokenKind::Register(b,),) => {
         // If they are both registers
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::SubRR.into(), target, a, b,],)
       }
       (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
@@ -380,7 +372,7 @@ impl<'tcx,> Compiler<'tcx,> {
         let a = self.ident_to_reg(a, token_a.span,);
         let b = self.ident_to_reg(b, token_b.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::SubRR.into(), target, a, b,],)
       }
       _ => {}
@@ -391,7 +383,7 @@ impl<'tcx,> Compiler<'tcx,> {
     let target = match target.kind {
       TokenKind::Register(reg,) => reg,
       TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent(target.kind, target.span.start),),
+      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
     };
 
     match (token_a.kind, token_b.kind,) {
@@ -400,7 +392,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // compilation
         let result = (a * b).to_le_bytes();
 
-        self.program.extend_from_slice(&[
+        self.main.extend_from_slice(&[
           OpCode::Load.into(),
           target,
           result[0],
@@ -413,7 +405,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // If a is an immediate value and b is a raw reg
         let a = a.to_le_bytes();
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::MulRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
@@ -421,14 +413,14 @@ impl<'tcx,> Compiler<'tcx,> {
         let a = a.to_le_bytes();
         let b = self.ident_to_reg(b, token_b.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::MulRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Register(a,), TokenKind::Num(b,),) => {
         // If a is a register and b is an immediate value
         let b = b.to_le_bytes();
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::MulRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
@@ -436,13 +428,13 @@ impl<'tcx,> Compiler<'tcx,> {
         let b = b.to_le_bytes();
         let a = self.ident_to_reg(a, token_a.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::MulRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Register(a,), TokenKind::Register(b,),) => {
         // If they are both registers
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::MulRR.into(), target, a, b,],)
       }
       (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
@@ -450,18 +442,19 @@ impl<'tcx,> Compiler<'tcx,> {
         let a = self.ident_to_reg(a, token_a.span,);
         let b = self.ident_to_reg(b, token_b.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::MulRR.into(), target, a, b,],)
       }
       _ => {}
     }
   }
 
-  pub(super) fn compile_div_expr(&mut self, target:Token, token_a:&Token, token_b:&Token,) {
+  #[rustfmt::skip]
+  pub(super) fn compile_div_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
     let target = match target.kind {
       TokenKind::Register(reg,) => reg,
       TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent(target.kind, target.span.start),),
+      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
     };
 
     match (token_a.kind, token_b.kind,) {
@@ -470,7 +463,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // compilation
         let result = (a / b).to_le_bytes();
 
-        self.program.extend_from_slice(&[
+        self.main.extend_from_slice(&[
           OpCode::Load.into(),
           target,
           result[0],
@@ -482,33 +475,30 @@ impl<'tcx,> Compiler<'tcx,> {
       (TokenKind::Num(a,), TokenKind::Register(b,),) => {
         // If a is an immediate value and b is a raw reg
         let a = a.to_le_bytes();
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::RvDivRI.into(), target, b, a[0], a[1], a[2], a[3],],);
+        self.main.extend_from_slice(&[OpCode::RvDivRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
         // If a is an immediate value and b is a variable
         let a = a.to_le_bytes();
         let b = self.ident_to_reg(b, token_b.span,);
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::RvDivRI.into(), target, b, a[0], a[1], a[2], a[3],],);
+        self.main.extend_from_slice(&[OpCode::RvDivRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Register(a,), TokenKind::Num(b,),) => {
         // If a is a register and b is an immediate value
         let b = b.to_le_bytes();
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::DivRI.into(), target, a, b[0], b[1], b[2], b[3],],)
+        
+      self.main.extend_from_slice(&[OpCode::DivRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
         // If a is a variable and b is an immediate value
         let b = b.to_le_bytes();
         let a = self.ident_to_reg(a, token_a.span,);
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::DivRI.into(), target, a, b[0], b[1], b[2], b[3],],)
+        self.main.extend_from_slice(&[OpCode::DivRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Register(a,), TokenKind::Register(b,),) => {
         // If they are both registers
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::DivRR.into(), target, a, b,],)
       }
       (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
@@ -516,18 +506,19 @@ impl<'tcx,> Compiler<'tcx,> {
         let a = self.ident_to_reg(a, token_a.span,);
         let b = self.ident_to_reg(b, token_b.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::DivRR.into(), target, a, b,],)
       }
       _ => {}
     }
   }
 
+  #[rustfmt::skip]
   pub(super) fn compile_pow_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
     let target = match target.kind {
       TokenKind::Register(reg,) => reg,
       TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent(target.kind, target.span.start),),
+      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
     };
 
     match (token_a.kind, token_b.kind,) {
@@ -536,7 +527,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // compilation
         let result = (a.powf(b,)).to_le_bytes();
 
-        self.program.extend_from_slice(&[
+        self.main.extend_from_slice(&[
           OpCode::Load.into(),
           target,
           result[0],
@@ -547,34 +538,30 @@ impl<'tcx,> Compiler<'tcx,> {
       }
       (TokenKind::Num(a,), TokenKind::Register(b,),) => {
         // If a is an immediate value and b is a raw reg
-        let a = a.to_le_bytes();
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::RvPowRI.into(), target, b, a[0], a[1], a[2], a[3],],);
+        let a = a.to_le_bytes(); 
+        self.main.extend_from_slice(&[OpCode::RvPowRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
         // If a is an immediate value and b is a variable
         let a = a.to_le_bytes();
         let b = self.ident_to_reg(b, token_b.span,);
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::RvPowRI.into(), target, b, a[0], a[1], a[2], a[3],],);
+        self.main.extend_from_slice(&[OpCode::RvPowRI.into(), target, b, a[0], a[1], a[2], a[3],],);
       }
       (TokenKind::Register(a,), TokenKind::Num(b,),) => {
         // If a is a register and b is an immediate value
         let b = b.to_le_bytes();
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::PowRI.into(), target, a, b[0], b[1], b[2], b[3],],)
+        self.main.extend_from_slice(&[OpCode::PowRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
         // If a is a variable and b is an immediate value
         let b = b.to_le_bytes();
         let a = self.ident_to_reg(a, token_a.span,);
-        #[rustfmt::skip]
-      self.program.extend_from_slice(&[OpCode::PowRI.into(), target, a, b[0], b[1], b[2], b[3],],)
+        self.main.extend_from_slice(&[OpCode::PowRI.into(), target, a, b[0], b[1], b[2], b[3],],)
       }
       (TokenKind::Register(a,), TokenKind::Register(b,),) => {
         // If they are both registers
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::PowRR.into(), target, a, b,],)
       }
       (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
@@ -582,7 +569,7 @@ impl<'tcx,> Compiler<'tcx,> {
         let a = self.ident_to_reg(a, token_a.span,);
         let b = self.ident_to_reg(b, token_b.span,);
         self
-          .program
+          .main
           .extend_from_slice(&[OpCode::PowRR.into(), target, a, b,],)
       }
       _ => {}
@@ -591,19 +578,73 @@ impl<'tcx,> Compiler<'tcx,> {
 
   /// Compiles the current comparison expression and returns the  [`Program`].
   pub(super) fn compile_cond_expr(&mut self,) -> Program {
-    let op = self.next_token();
-    let token_a = self.next_token();
-    let token_b = self.next_token();
+    let op = self.next_token().unwrap();
+    let token_a = self.next_token().unwrap();
+    let token_b = self.next_token().unwrap();
     self.compile_comparison_return(&op, &token_a, &token_b,)
   }
 
+  pub(super) fn compile_loop_expr(&mut self,) {
+    // Set the return address
+    let ret = self.main.len();
+    
+    // Compile the block contaning the LOOP's contents and add it to the
+    // main main
+    self.compile_block();
+
+    // Jump to the `ret` address
+    self.main.push(OpCode::Jmp.into());
+    let site_idx = self.linker.register_jump_site(&mut self.main);
+    self.linker.update_jump_site(site_idx, ret);
+  }
+
+  pub(super) fn compile_while_loop_expr(&mut self){
+    // Catch the statment here if it is a bool and optimize it out
+    if let TokenKind::Bool(b,) = self.tokens.peek().unwrap().kind {
+      self.next_token().unwrap();
+      if b {
+        self.compile_loop_expr();
+      }
+      else {
+        self.eat_block();
+      }
+      return;
+    }
+
+    let cond = self.compile_cond_expr();
+
+    // Use a defered patch here to jump to the check
+    self.main.push(OpCode::Jmp.into(),);
+    // Create a jump site for the linker to handle here
+    let jump_site = self.linker.register_jump_site(&mut self.main);
+
+    // Set the return point for the JNZ to be the begining of the loop block's logic
+    let ret = self.main.len() ;
+
+    // Compile the block contaning the LOOP's contents and add it to the
+    // main program
+    self.compile_block();
+
+    // Set the defered patch's target to the cond check
+    self.linker.update_jump_site(jump_site, self.main.len());
+
+    // Check the condition
+    self.main.extend_from_slice(cond.as_slice(),);
+
+    // Jump to the `ret` address if the condition is true (not zero)
+    self.main.extend_from_slice(&[OpCode::Jnz.into(), EQ as u8,],);
+    let loop_start_site = self.linker.register_jump_site(&mut self.main,);
+    self.linker.update_jump_site(loop_start_site, ret)
+  }
+
+  #[rustfmt::skip]
   pub(super) fn compile_for_loop_expr(&mut self,) {
     // Confirm the next token is an ident and eat it
     // This ident is discarded because the loop_variable uses the LOOP reg
     let ident = self.tokens.next().unwrap();
     match ident.unwrap_ident() {
       Some(_,) => {}
-      None => panic!("{}", ASMError::MissingLoopVar(ident.span.start, ident.kind)),
+      None => panic!("{}", ASMError::MissingLoopVar{token:ident.kind,span:ident.span,}),
     }
 
     // Ensure the syntax contains "in" as required
@@ -622,45 +663,33 @@ impl<'tcx,> Compiler<'tcx,> {
     };
 
     // Set the counter equal to the range's start
-    #[rustfmt::skip]
-  self.program.extend_from_slice(&[
-    OpCode::Load.into(), LOOP as u8, start[0], start[1], start[2], start[3],
-  ],);
+    
+    self.main.extend_from_slice(&[
+      OpCode::Load.into(), LOOP as u8, start[0], start[1], start[2], start[3],
+    ],);
 
     // Set the return address
-    let ret = (self.program.len() as f32).to_le_bytes();
+    let ret = self.main.len();
 
     // Compile the block
-    // self.program.extend_from_slice(self.compile_block().as_slice(),);
     self.compile_block();
 
-    #[rustfmt::skip]
-  self.program.extend_from_slice(&[
-    // Increment the counter by the value of 1f32 in le bytes = [0, 0, 128, 63,]
-    OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
-    // Compare the counter to the range's end and store in EQ
-    OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, end[0], end[1], end[2], end[3],
-    // JZ EQ to the begining of the loop
-    OpCode::Jz.into(), ret[0], ret[1], ret[2], ret[3], EQ as u8,
-  ],);
-  }
+    self.main.extend_from_slice(&[
+      // Increment the counter by the value of 1f32 in le bytes = [0, 0, 128, 63,]
+      OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
+      // Compare the counter to the range's end and store in EQ
+      OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, end[0], end[1], end[2], end[3],
+      // JZ EQ to the begining of the loop
+      OpCode::Jz.into(), EQ as u8,
+    ],);
 
-  pub(super) fn compile_loop_expr(&mut self,) {
-    // Set the return address
-    let ret = (self.program.len() as f32).to_le_bytes();
-
-    // Compile the block contaning the LOOP's contents and add it to the
-    // main program
-    self.compile_block();
-
-    // Jump to the `ret` address
-    self
-      .program
-      .extend_from_slice(&[OpCode::Jmp.into(), ret[0], ret[1], ret[2], ret[3],],);
+    let patch_site = self.linker.register_jump_site(&mut self.main);
+    self.linker.update_jump_site(patch_site, ret);
   }
 
   /// Compiles the block making up the body of an `if` expression.
   pub(super) fn compile_if_body_expr(&mut self,) {
+    // Handle the case where the condition is an immediate value (boolean)
     if let TokenKind::Bool(b,) = self.tokens.peek().unwrap().kind {
       // Make the bool the current token
       self.next_token();
@@ -688,18 +717,22 @@ impl<'tcx,> Compiler<'tcx,> {
     }
     // Compile the condition
     let cond = self.compile_cond_expr();
-    self.program.extend_from_slice(cond.as_slice(),);
+    self.main.extend_from_slice(cond.as_slice(),);
 
-    // Check the condition use a JZ to jump to the end of the IF expression
+    // Check the condition. Use a JZ to jump to the end of the IF expression
     // if it is false.
     // Use a defered patch in place of the end of the expression.
-    self.program.extend_from_slice(&[OpCode::Jz.into(), EQ as u8,],);
-    let patch_idx = self.deferred.reserve(self.program.len(), &mut self.program,);
+    self.main.extend_from_slice(&[OpCode::Jz.into(), EQ as u8,],);
+    // let mut patch = Patch::new();
+    let jmp_site = self.linker.register_jump_site(&mut self.main);
 
     // Compile the block
     self.compile_block();
 
     // Update the deferred patch
-    self.deferred.update_target(patch_idx, self.program.len(),);
+    self.linker.update_jump_site(jmp_site, self.main.len());
+    // patch.update_address(self.main.len(),);
+    // patch.patch(&mut self.main);
   }
+
 }
