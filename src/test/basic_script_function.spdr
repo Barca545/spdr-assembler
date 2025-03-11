@@ -1,0 +1,12 @@
+FN foo {
+  MUL $6 $4 $5 
+  ADD $6 $6 30.543
+  COPY $4 $6
+  RET 0  
+}
+
+// Call the function with 5.4 and 13.222
+LOAD $4 5.4
+LOAD $5 13.222
+CALL foo
+COPY $15 $4

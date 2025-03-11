@@ -25,10 +25,10 @@ pub enum ASMError<'e,> {
   #[error("\x1b[93mMISSING LOOP VARIABLE:\x1b[0m For loops must have a loop variable. The loop defined here {} is followed by {}.", span.start, token)]
   MissingLoopVar { token:TokenKind, span:Span, },
   #[error(
-    "\x1b[93mMISSING FUNCTION NAME:\x1b[0m A function declaration must be followed by an identifier, not {} {}.",token.kind, token.span.start
+    "\x1b[93mMISSING FUNCTION NAME:\x1b[0m A function declaration must be followed by an identifier, not `{}` {}.",token.kind, token.span.start
   )]
   MissingFnName { token:Token, },
-  #[error("\x1b[93mNO NAME:\x1b[0m A function call must be followed by an identifier, not {} {}",token.kind, token.span.start)]
+  #[error("\x1b[93mNO NAME:\x1b[0m A function call must be followed by an identifier, not `{}` {}",token.kind, token.span.start)]
   NoNameCall { token:Token, },
   // Can these be aggregated?
   #[error("\x1b[93mNOT REGISTER OR IDENTITY:\x1b[0m {} {} is not a register or an identifier.", token.kind, token.span.start)]
@@ -43,6 +43,8 @@ pub enum ASMError<'e,> {
   NotFunction(Ty,),
   #[error("\x1b[93mUNAVAILABLE FUNCTION NAME:\x1b[0m The name {0} is already in use.")]
   UnavailableFunctionName(&'e str,),
+  #[error("\x1b[93mUNDEFINED FUNCTION:\x1b[0m Cannot use {name} {} without defining it.", span.start)]
+  UndefinedFunction { name:&'e str, span:Span, },
   #[error(
     "\x1b[93mUNREGISTERED EXTERNAL CALL:\x1b[0m The name {name} {} is not associated with a registered external function call.", span.start
   )]
@@ -68,6 +70,7 @@ impl<'e,> ASMError<'e,> {
       ASMError::NotFunction(..,) => todo!(),
       ASMError::UnavailableFunctionName(_,) => todo!(),
       ASMError::UnregistedSyscall { span, .. } => *span,
+      ASMError::UndefinedFunction { span, .. } => *span,
     }
   }
 }

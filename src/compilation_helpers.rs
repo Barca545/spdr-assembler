@@ -1,3 +1,4 @@
+use crate::patch::Patch;
 use crate::{assembler_errors::ASMError, Compiler, Token, TokenKind};
 use spdr_isa::opcodes::{CmpFlag, OpCode};
 use spdr_isa::program::Program;
@@ -242,7 +243,7 @@ impl<'tcx,> Compiler<'tcx,> {
           other => panic!("{}", ASMError::InvalidComparison{token:*other})
         }
       }
-      (other_1, other_2,) => unreachable!("({},{}) are invalid", other_1, other_2),
+      (other_1, other_2,) => panic!("({} and {}) are invalid comparison arguments.", other_1, other_2),
     }
   }
 
@@ -586,21 +587,20 @@ impl<'tcx,> Compiler<'tcx,> {
 
   pub(super) fn compile_loop_expr(&mut self,) {
     // Set the return address
-    let ret = self.main.len();
+    let ret = self.main.len() as u32;
     
     // Compile the block contaning the LOOP's contents and add it to the
     // main main
     self.compile_block();
 
-    // Jump to the `ret` address
+    // Add the Jmp to the `ret` address
     self.main.push(OpCode::Jmp.into());
-    let site_idx = self.linker.register_jump_site(&mut self.main);
-    self.linker.update_jump_site(site_idx, ret);
+    self.main.extend_from_slice(&ret.to_le_bytes());
   }
 
   pub(super) fn compile_while_loop_expr(&mut self){
     // Catch the statment here if it is a bool and optimize it out
-    if let TokenKind::Bool(b,) = self.tokens.peek().unwrap().kind {
+    if let TokenKind::Bool(b,) = self.peek().unwrap().kind {
       self.next_token().unwrap();
       if b {
         self.compile_loop_expr();
@@ -615,40 +615,41 @@ impl<'tcx,> Compiler<'tcx,> {
 
     // Use a defered patch here to jump to the check
     self.main.push(OpCode::Jmp.into(),);
-    // Create a jump site for the linker to handle here
-    let jump_site = self.linker.register_jump_site(&mut self.main);
+    // Create a patch for the address of the condition check
+    let mut patch = Patch::new();
+    patch.reserve_region(&mut self.main);
 
     // Set the return point for the JNZ to be the begining of the loop block's logic
-    let ret = self.main.len() ;
+    let ret = (self.main.len() as u32).to_le_bytes();
 
     // Compile the block contaning the LOOP's contents and add it to the
     // main program
     self.compile_block();
 
     // Set the defered patch's target to the cond check
-    self.linker.update_jump_site(jump_site, self.main.len());
+    // self.linker.update_jump_site(jump_site, self.main.len());
+    patch.update_address(self.main.len()).unwrap();
+    patch.patch(&mut self.main);
 
     // Check the condition
     self.main.extend_from_slice(cond.as_slice(),);
 
     // Jump to the `ret` address if the condition is true (not zero)
-    self.main.extend_from_slice(&[OpCode::Jnz.into(), EQ as u8,],);
-    let loop_start_site = self.linker.register_jump_site(&mut self.main,);
-    self.linker.update_jump_site(loop_start_site, ret)
+    self.main.extend_from_slice(&[OpCode::Jnz.into(), EQ as u8, ret[0], ret[1], ret[2], ret[3]],);
   }
 
   #[rustfmt::skip]
   pub(super) fn compile_for_loop_expr(&mut self,) {
     // Confirm the next token is an ident and eat it
     // This ident is discarded because the loop_variable uses the LOOP reg
-    let ident = self.tokens.next().unwrap();
+    let ident = self.next_token().unwrap();
     match ident.unwrap_ident() {
       Some(_,) => {}
       None => panic!("{}", ASMError::MissingLoopVar{token:ident.kind,span:ident.span,}),
     }
 
     // Ensure the syntax contains "in" as required
-    let kwd = self.tokens.next().unwrap();
+    let kwd = self.next_token().unwrap();
     assert_eq!(
       kwd.kind,
       TokenKind::In,
@@ -657,7 +658,7 @@ impl<'tcx,> Compiler<'tcx,> {
     );
 
     // Parse the range
-    let (start, end,) = match self.tokens.next().unwrap().unwrap_range() {
+    let (start, end,) = match self.next_token().unwrap().unwrap_range() {
       Ok((start, end,),) => ((start as f32).to_le_bytes(), (end as f32).to_le_bytes(),),
       Err(err,) => panic!("{}", err),
     };
@@ -669,7 +670,7 @@ impl<'tcx,> Compiler<'tcx,> {
     ],);
 
     // Set the return address
-    let ret = self.main.len();
+    let ret = (self.main.len() as u32).to_le_bytes();
 
     // Compile the block
     self.compile_block();
@@ -680,24 +681,23 @@ impl<'tcx,> Compiler<'tcx,> {
       // Compare the counter to the range's end and store in EQ
       OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, end[0], end[1], end[2], end[3],
       // JZ EQ to the begining of the loop
-      OpCode::Jz.into(), EQ as u8,
+      OpCode::Jz.into(), EQ as u8, ret[0], ret[1], ret[2], ret[3],
     ],);
 
-    let patch_site = self.linker.register_jump_site(&mut self.main);
-    self.linker.update_jump_site(patch_site, ret);
+   
   }
 
   /// Compiles the block making up the body of an `if` expression.
   pub(super) fn compile_if_body_expr(&mut self,) {
     // Handle the case where the condition is an immediate value (boolean)
-    if let TokenKind::Bool(b,) = self.tokens.peek().unwrap().kind {
+    if let TokenKind::Bool(b,) = self.peek().unwrap().kind {
       // Make the bool the current token
       self.next_token();
       if b {
         // If the cond is `true`, just compile the block that makes up its body
         self.compile_block();
         // Also devour any following else block
-        if self.tokens.peek().unwrap().kind == TokenKind::Else {
+        if self.peek().unwrap().kind == TokenKind::Else {
           // Must explicitly get rid of the current token because it is the curly bracket
           self.next_token();
           self.eat_current_instruction();
@@ -707,7 +707,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // If the cond is `false` just eat the if
         self.eat_block();
         // If there is an else block compile the code
-        if self.tokens.peek().unwrap().kind == TokenKind::Else {
+        if self.peek().unwrap().kind == TokenKind::Else {
           // Must explicitly get rid of the current token because it is the curly bracket
           self.next_token();
           self.compile_current_instruction();
@@ -723,16 +723,15 @@ impl<'tcx,> Compiler<'tcx,> {
     // if it is false.
     // Use a defered patch in place of the end of the expression.
     self.main.extend_from_slice(&[OpCode::Jz.into(), EQ as u8,],);
-    // let mut patch = Patch::new();
-    let jmp_site = self.linker.register_jump_site(&mut self.main);
+    let mut patch = Patch::new();
+    patch.reserve_region(&mut self.main);
 
     // Compile the block
     self.compile_block();
 
     // Update the deferred patch
-    self.linker.update_jump_site(jmp_site, self.main.len());
-    // patch.update_address(self.main.len(),);
-    // patch.patch(&mut self.main);
+    patch.update_address(self.main.len(),).unwrap();
+    patch.patch(&mut self.main);
   }
 
 }

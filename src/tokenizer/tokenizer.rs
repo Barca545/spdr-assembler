@@ -456,8 +456,7 @@ mod test {
 
   #[test]
   fn test_tokenize() {
-    let src =
-      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test_tokens.spdr");
+    let src = include_str!("../test/test_tokens.spdr");
 
     let mut lex = Lexer::new(src,);
 
@@ -535,8 +534,7 @@ mod test {
 
   #[test]
   fn tokenizer_errors_print() {
-    let src =
-      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\spdr_error_test.spdr");
+    let src = include_str!("../../src/test/spdr_error_test.spdr");
     let mut lex = Lexer::new(src,);
     let mut out = Vec::new();
     let _ = lex.tokenize(&mut out,);

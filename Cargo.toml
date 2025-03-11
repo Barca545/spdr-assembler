@@ -7,10 +7,8 @@ edition = "2021"
 
 [dependencies]
 eyre = "0.6.12"
-spdr_isa = {git = "https://github.com/Barca545/spdr_isa.git", rev = "cb2060c93b6fc7ea9195afb365e3ef0fe5946cbb"}
 thiserror = "2.0.11"
+spdr-isa = {git = "https://github.com/Barca545/spdr-isa.git", rev = "97808963f20a30ec997ce2a96704c67051669da4"}
 
 [dev-dependencies]
-# galaxy = {git = "https://github.com/Barca545/galaxy.git"}
-
-[alias]
+spdr-vm = {git = "https://github.com/Barca545/spdr-vm.git", rev = "aa7ccf8f5bfdf59a87317122bc3a943083bdd464"}

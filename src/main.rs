@@ -1,12 +1,12 @@
 mod assembler_errors;
 mod compilation_helpers;
-mod defered_patch;
+mod patch;
 mod error_printing;
 mod interner;
 mod tokenizer;
 
 use assembler_errors::ASMError;
-use defered_patch::Linker;
+use patch::Patch;
 use interner::{intern, lookup};
 use spdr_isa::{
   opcodes::OpCode,
@@ -14,7 +14,7 @@ use spdr_isa::{
   registers::{FIRST_FREE_REGISTER, REG_COUNT},
 };
 use std::{
-  collections::HashMap, env, fmt::{Debug, Display}, fs::read_to_string, io::{self, Write}, iter::Peekable, usize, vec::IntoIter
+  collections::HashMap, env, fmt::{Debug, Display}, fs::read_to_string, io::{self, Write}, usize,
 };
 use tokenizer::{Lexer, Span, Token, TokenKind};
 
@@ -37,6 +37,8 @@ use tokenizer::{Lexer, Span, Token, TokenKind};
 // - `compile_block_return` can be implemented way more efficiently
 // - Currently All identifiers must be unique. I am not actually sure this
 //   bothers me.
+// - Next token can also set care of setting the current token instead of having the loop do that. or just make current token a function instead of a field. Dealer's choice.
+
 
 // TODO:
 // - Jump instructions should accept labels as arguments
@@ -78,12 +80,12 @@ fn main() {
 //JUMP AND JNZ will never take a Register as an arg.
 enum Ty {
   /// Registers hold the index of their assigned register
-  Register(usize,),
+  Register(u8,),
   /// Labels hold the index number the label references.
   Label(usize,),
-  /// Functions hold the [`Patch`](defered_patch::Patch) index of a function's address and a `bool` indicating whether it has been definined yet.
-  // Function(usize, bool),
-  Function(usize),
+  /// Functions hold the function's address as a `[u8;4]`;
+  Function([u8;4]),
+  
   /// Functions hold the index the VM where stores them in its collection of
   /// external functions.
   ExternalFunction(u8,),
@@ -125,48 +127,67 @@ impl VarDecl {
   }
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+enum CompilerPhase{
+  #[default]
+  FunctionCompilation,
+  BinaryCompilation,
+}
+
 #[derive(Debug, Clone,)]
 struct Compiler<'tcx,> {
-  tokens:Peekable<IntoIter<Token,>,>,
+  phase:CompilerPhase,
+  tokens:Vec<Token,>,
+  cursor:usize,
+  /// The [`Token`] the compiler is currently reading.
+  current_instruction:Token,
   /// The Symbol Table for the currently compiling program.
   table:HashMap<u32, VarDecl,>,
+  function_patches:HashMap<u32,Patch>,
   open:u8,
-  /// The locations to [`Patch`](defered_patch::Patch) into the
-  /// program once compilation of the source is finished.
-  linker:Linker,
-  /// Stores the index of the next register available for register allocation.
-  /// The portion of the binary where function definitions are stored. 
-  lib:Program,
   /// The body of the binary's "`main`" function.
   main:Program,
-  /// The [`Token`] the compiler is currently reading.
-  current_instruction:Option<Token,>,
+
   _str:&'tcx str,
 }
 impl<'tcx,> Compiler<'tcx,> {
   /// Create a new empty compiler without a file.
   fn new<W:Write>(src:&'tcx str, mut w:W) -> Self {
+    let tokens = Lexer::new(src,).tokenize(&mut w);
+    let current_instruction = tokens[0];
     Self {
-      tokens:Lexer::new(src,).tokenize(&mut w).into_iter().peekable(),
+      phase:CompilerPhase::default(),
+      tokens,
+      cursor:0,
+      current_instruction,
       table:HashMap::new(),
-      linker:Linker::new(),
-      lib:Program::new(),
+      function_patches:HashMap::new(),
       main:Program::new(),
       open:FIRST_FREE_REGISTER as u8,
-      current_instruction:None,
       _str:src,
     }
   }
 
-  /// Returns the [`TokenKind`] of the instruction currently being compiled.
-  fn current_instruction_kind(&self,) -> TokenKind {
-    self.current_instruction.unwrap().kind
-  }
-
   /// Returns the next [`Token`] in the `src`.
   fn next_token(&mut self,) -> Option<Token> {
-    self.current_instruction =  self.tokens.next();
-    self.current_instruction
+    let token =  if self.cursor < self.tokens.len(){
+      self.current_instruction = self.tokens[self.cursor];
+      Some(self.tokens[self.cursor])
+    }
+    else{
+      None
+    };
+    self.cursor += 1;
+    token
+  }
+
+  fn peek(&self)-> Option<Token>{
+    if self.cursor < self.tokens.len(){
+      Some(self.tokens[self.cursor])
+    }
+    else{
+      None
+    }
   }
 
   /// Consume the next `n` [`Token`]s in the `src`.
@@ -199,20 +220,12 @@ impl<'tcx,> Compiler<'tcx,> {
       } => {
         self
           .table
-          .insert(sym_idx, VarDecl::new(Ty::Register(reg as usize,),),);
+          .insert(sym_idx, VarDecl::new(Ty::Register(reg,),),);
       }
       _ => panic!("Tried to make a non identifier {} into a variable", ident.kind),
     }
     reg
   }
-
-  // /// Adds an identifier to the [`Compiler`]'s Symbol Table as a
-  // /// [`Ty::Label`].
-  // fn add_as_label(){}
-
-  // /// Adds an identifier to the [`Compiler`]'s Symbol Table as a
-  // /// [`Ty::Function`].
-  // fn add_as_function(){}
 
   /// Read a `*.hd` file from the given path.
   fn read_header(&mut self, src:&str,) {
@@ -255,10 +268,29 @@ impl<'tcx,> Compiler<'tcx,> {
         // TODO: This need to be an actual error
         panic!(
           "Invalid Target: {} only accepts registers as inputs. {other} is not a register.",
-          self.current_instruction.unwrap().kind
+          self.current_instruction.kind
         )
       }
     }
+  }
+
+  /// Use when a function is `CALL`ed before it is defined. Creates a [`Patch`] for a [`TokenKind::Identifier`] 
+  /// which records the [`Region`](defered_patch::Region) of a function pointer for later patching.
+  fn create_function_pointer_patch(&mut self, name:&u32){
+    // Patch in the function portion of the binary to overwrite with a concrete address.
+    let addr_patch = self.function_patches.entry(*name).or_insert(Patch::new());
+
+    // Reserve the region
+    addr_patch.reserve_region(&mut self.main);
+  }
+
+  /// Give a concrete address to a function that was previously called without a definition. 
+  fn fill_function_pointer_patch(&mut self, name:&u32, addr:usize){
+    // Update the patch's PatchData
+    self.function_patches.entry(*name).and_modify(|patch|patch.update_address(addr).unwrap());
+
+    // Create an entry in the symbol table
+    self.table.insert(*name, VarDecl { ty:Ty::Function((addr as u32).to_le_bytes()) });
   }
 
   /// If the next [`Token`] in the source is a [`TokenKind::Bool`] or
@@ -299,35 +331,44 @@ impl<'tcx,> Compiler<'tcx,> {
   /// Compiles the .spdr file loaded into the compiler into a .spex executable
   /// file.
   fn compile(&mut self,) -> Program {
-    // Compile `main` -- iterate over each each and interpret it as an opcode
-    while let Some(instruction,) =  self.next_token() {
-      self.current_instruction = Some(instruction,);
-      // Match the instruction
-      self.compile_current_instruction();
+    // Compile only the functions and store them at the beginning of the binary
+    while let Some(instruction) = self.next_token(){
+      match instruction.kind{
+        TokenKind::Fn => self.compile_current_instruction(),
+        _=> self.eat_current_instruction(),
+      }
     }
 
-    // Get the len of the `lib` + 4 which is the offset of the `main`
-    let offset = self.lib.len() + 5;
+    // Patch all the unassigned function addresses
+    for (_, patch) in self.function_patches.iter(){
+      patch.patch(&mut self.main);
+    }
+    
+    // Get the len of the `lib` + 5 which is the offset of the `main`
+    let offset = (self.main.len() as u32 + 5).to_le_bytes();
+    self.main.push_front(vec![OpCode::Jmp.into(), offset[0], offset[1], offset[2], offset[3]]);
 
-    // Patch the linker locations and the function definition into the binary
-    self.linker.link(&mut self.main, &self.lib);
+    // Reset the cursor so the tokens can be looped through again
+    self.cursor = 0;
+    // Switch the compiler phase
+    self.phase = CompilerPhase::BinaryCompilation;
 
-    // Create the output binary
-    let mut out = Program::from(Vec::with_capacity(offset + self.main.len()));
-    out.push(OpCode::Jmp.into());
-    out.extend_from_slice(&(offset as f32).to_le_bytes());
-    out.extend_from_slice(self.lib.as_slice());
-    out.extend_from_slice(self.main.as_slice()); 
-    // Append the halt command to the `main` binary
-    out.push(OpCode::Hlt.into(),);
-
-    // Once all lines are patched and linking has completed return the program
-    return out;
+    // Compile `main` -- iterate over each instruction and interpret it as an opcode
+    while let Some(instruction,) =  self.next_token() {
+      // Compile while skipping function definitions
+      match instruction.kind {
+        TokenKind::Fn => self.eat_current_instruction(),
+        _ => self.compile_current_instruction(),
+      }
+    }
+    
+    self.main.push(OpCode::Hlt.into());
+    return self.main.clone()
   }
 
   /// Consume and discard the current intruction in the program.
   fn eat_current_instruction(&mut self,) {
-    match self.current_instruction.unwrap().kind {
+    match self.current_instruction.kind {
       // Consume 0 tokens
       TokenKind::Eof | TokenKind::Noop | TokenKind::Pop | TokenKind::Dealloc => {}
 
@@ -380,7 +421,7 @@ impl<'tcx,> Compiler<'tcx,> {
       }
       TokenKind::Else => {
         // If the "instruction" starts with a bracket, eat block should be called
-        return match self.tokens.peek().unwrap().kind {
+        return match self.peek().unwrap().kind {
           TokenKind::LCurlyBracket => self.eat_block(),
           // Doing nothing here will make it continue compiling the program which is what we want
           _ => {}
@@ -388,7 +429,7 @@ impl<'tcx,> Compiler<'tcx,> {
       }
       _ => panic!(
         "{}",
-        ASMError::NotAnOpcode{ token: self.current_instruction.unwrap() }
+        ASMError::NotAnOpcode{ token: self.current_instruction }
          
         
       ),
@@ -398,7 +439,7 @@ impl<'tcx,> Compiler<'tcx,> {
   #[rustfmt::skip]
   /// Compile the next intruction in the program.
   fn compile_current_instruction(&mut self,) {
-    match self.current_instruction_kind() {
+    match self.current_instruction.kind {
       TokenKind::Load => {
         let reg = self.next_token_as_register();
 
@@ -413,14 +454,14 @@ impl<'tcx,> Compiler<'tcx,> {
         let src = self.next_token_as_register();
         self.main.extend_from_slice(&[OpCode::Copy.into(), dst, src,],)
       }
-      TokenKind::Const | TokenKind::Var => {
+      TokenKind::Var => {
         // Add the next token to the symbol table assuming it is an ident
         let ident =  self.next_token().unwrap();
         let reg = self.add_as_reg(ident,);
 
         // Eat the `=` sign
         if TokenKind::EqualSign !=  self.next_token().unwrap().kind {
-          panic!("{}", ASMError::NoEquals(self.current_instruction_kind()))
+          panic!("{}", ASMError::NoEquals(self.current_instruction.kind))
         }
 
         // Get the immediate as an array and generate the instruction
@@ -512,7 +553,7 @@ impl<'tcx,> Compiler<'tcx,> {
         }
       }
       TokenKind::Eq | TokenKind::Gt | TokenKind::Lt | TokenKind::Geq | TokenKind::Leq => {
-        let op = self.current_instruction.unwrap();
+        let op = self.current_instruction;
         let a =  self.next_token().unwrap();
         let b =  self.next_token().unwrap();
         self.compile_comparison(&op, &a, &b,);
@@ -522,7 +563,7 @@ impl<'tcx,> Compiler<'tcx,> {
       TokenKind::For => self.compile_for_loop_expr(),
       TokenKind::If => self.compile_if_body_expr(),
       TokenKind::Else => {
-        let next_operation = *self.tokens.peek().unwrap();
+        let next_operation = self.peek().unwrap();
         // If the "instruction" starts with a bracket, compile block should be called
         return match next_operation.kind {
           TokenKind::LCurlyBracket => self.compile_block(),
@@ -531,77 +572,47 @@ impl<'tcx,> Compiler<'tcx,> {
         };
       }
       TokenKind::Fn => {
-        // Store the name in the symbol table
+        // Store the name in the symbol table        
+        // Because of how interning works, "name" will be the order the identifier appeared in the source code. 
+        // So an earlier defined function might have a later "name" if a function defined after it was called first
         let name = match  self.next_token().unwrap() {
           Token { kind:TokenKind::Identifier(name,) , .. } => name,
           other => panic!("{}", ASMError::MissingFnName{token:other}),
-        };
-
+        };  
+      
         // Create a function declaration and store it in the symbol table
         match self.table.get(&name,) {
-          // If there are function invocations but no use
-          Some(&VarDecl { ty:Ty::Function(patch_idx) }) => {
-            // The function pointer's address must be added to the linker before the body is compiled 
-            // This is to ensure the declaration is accessible to any recursive calls in the body
-            // Get the function pointer
-            let ptr = self.next_function_pointer();
-            // Try to update the patch's address
-            if self.linker.update_function_pointer(patch_idx, ptr).is_err(){
-              panic!("Function is already definied.\n{}", ASMError::UnavailableFunctionName(&lookup(name)))
-            }
-            // Compile the function body
-            let body = self.compile_block_return();
-            // Store the function in `lib` 
-            self.store_function(body);
-          }
-          // If there is no declaration make a new one
+          // If the name is already in the table then 
+          Some(_) => panic!("{}", ASMError::UnavailableFunctionName(&lookup(name))),
           None => {
-            // The function pointer's address must be added to the linker before the body is compiled 
-            // This is to ensure the declaration is accessible to any recursive calls in the body
-            // Get the function pointer
-            let ptr = self.next_function_pointer();
-            // Store the pointer in the linker 
-            let patch_idx = self.linker.reserve();
-            self.linker.update_function_pointer(patch_idx, ptr).unwrap();
-
-            // Store the new declaration in the symbol table
-            self.table.insert(name, VarDecl { ty: Ty::Function(patch_idx) });   
-            
-            // Compile the function body
-            let body = self.compile_block_return();
-            // Record the function in `lib` and get the pointer
-            self.store_function(body);         
+            // Get the function address 
+            let addr = self.next_function_pointer();
+            // Store the address in the symbol table
+            self.fill_function_pointer_patch(&name, addr);           
+            // self.table.insert(name, VarDecl { ty: Ty::Function((ptr as f32).to_le_bytes()) });
+            // Compile the function 
+            self.compile_block();
           }
-          // Error if there is already a symbol table entry for the identifier
-          _ => panic!("{}", ASMError::UnavailableFunctionName(&lookup(name))),
         }
       }
       TokenKind::Call => {
-        let name = match self.next_token().unwrap() {
-          Token { kind: TokenKind::Identifier(name,), .. } => name,
+        let (name, span) = match self.next_token().unwrap() {
+          Token { kind: TokenKind::Identifier(name,), span } => (name, span),
           other => panic!("{}", ASMError::NoNameCall { token: other }),
         };
+
         // Place the Call opcode in the function
         self.main.push(OpCode::Call.into(),);
 
         match self.table.get(&name){
           // If the function already has a symbol table entry attempt to retrieve its pointer
-          Some(VarDecl { ty: Ty::Function(patch_idx)}) => {
-            match self.get_function_pointer(patch_idx) {
-              // Add the pointer to the program
-              Some(ptr) => self.main.extend_from_slice(&ptr,),
-              // Reserve a patch site for later linking
-              None => self.linker.insert_patch_site(*patch_idx, &mut self.main),
-            }
+          Some(VarDecl { ty: Ty::Function(ptr)}) => {
+            self.main.extend_from_slice(ptr,)
           },
-          // If the function does not have a symbol table entry, create one
-          None => {
-            let patch_idx = self.linker.reserve();
-            // Reserve a patch site for later linking            
-            self.linker.insert_patch_site(patch_idx, &mut self.main);
-            // Generate an empty function symbol table entry to fill when the function definition is encountered
-            self.table.insert(name, VarDecl { ty: Ty::Function(patch_idx) });
-          },
+          // If the function does not have a symbol table entry *during function compilation* make a patch
+          None if self.phase == CompilerPhase::FunctionCompilation => self.create_function_pointer_patch(&name),
+          // If the function does not have a symbol table entry *during binary compilation* error
+          None => panic!("{}", ASMError::UndefinedFunction { name: &lookup(name), span }),
           // If the identifier does not reference a function throw an error
           Some(VarDecl { ty })  => panic!("{}", ASMError::NotFunction(*ty)),
         }
@@ -653,7 +664,7 @@ impl<'tcx,> Compiler<'tcx,> {
         self.main.extend_from_slice(&[OpCode::PopR.into(), reg,],);
       }
       TokenKind::Wmem | TokenKind::Rmem => {
-        let op = match self.current_instruction_kind() {
+        let op = match self.current_instruction.kind {
           TokenKind::Wmem => OpCode::WMem.into(),
           TokenKind::Rmem => OpCode::RMem.into(),
           _=> unreachable!()
@@ -693,7 +704,7 @@ impl<'tcx,> Compiler<'tcx,> {
       TokenKind::Eof => {}
       _ => panic!(
         "{}",
-        ASMError::NotAnOpcode { token: self.current_instruction.unwrap() }
+        ASMError::NotAnOpcode { token: self.current_instruction }
       ),
     }
   }
@@ -709,7 +720,6 @@ impl<'tcx,> Compiler<'tcx,> {
 
     // Create the block to be compiled
     while let Some(instruction,) =  self.next_token() {
-      self.current_instruction = Some(instruction,);
       if instruction.kind == TokenKind::RCurlyBracket {
         // Does not need to eat the block because the compile function will call the
         // next token
@@ -729,29 +739,13 @@ impl<'tcx,> Compiler<'tcx,> {
     );
     // Create the block to be compiled
     while let Some(_,) =  self.next_token() {
-      if self.current_instruction_kind() == TokenKind::RCurlyBracket {
-        // Does not need to eat the block because the compile function will call the
+      if self.current_instruction.kind == TokenKind::RCurlyBracket {
+        // Does not need to eat the bracket because the compile instruction will call the
         // next token
         break;
       }
       self.compile_current_instruction()
     }
-  }
-
-  /// Compile the next block in the program and return the restule as a
-  /// [`Program`].
-  fn compile_block_return(&mut self,) -> Program {
-    // Store the real program 
-    let original_program = self.main.clone();
-    // Compile the block into a new program
-    self.main = Program::new();
-    // Compile the block
-    self.compile_block();
-    // Store the block's program
-    let block = self.main.clone();
-    // Place the real program back into the compiler
-   self.main = original_program;
-   block    
   }
 }
 
@@ -759,20 +753,19 @@ impl<'tcx,> Compiler<'tcx,> {
 mod test {
   use std::io;
 
-use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
+use crate::{interner::intern, Compiler, Ty, VarDecl};
   use spdr_isa::{
     opcodes::{CmpFlag, OpCode},
     program::Program,
     registers::{EQ, LOOP},
   };
-
-  // TODO: (I believe right now it is currently just unreachable)
+use spdr_vm::vm::VM;
 
   #[test]
   fn load_header() {
+    //TODO: Figure out why this does not import partial header paths
     let mut compiler = Compiler::new("",io::stdout());
-    compiler
-      .read_header("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test_header.hd",);
+    compiler.read_header("../src/test/test_header.hd",);
 
     let decl_1 = match compiler.table.get(&intern("foo",),).unwrap().ty {
       Ty::ExternalFunction(idx,) => idx,
@@ -788,6 +781,13 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
   }
 
   #[test]
+  fn eat_instruction_works() {
+    let src = include_str!("../src/test/full_compilation_test.spdr");
+    let p = Compiler::new(src, io::stdout()).eat_compile();
+    assert_eq!(p.as_slice(), []);
+  }
+
+  #[test]
   #[rustfmt::skip]
   fn compile_load_cpy() {
     let p = Compiler::new("Load $14 1 Copy $15 $12",io::stdout()).compile();
@@ -795,7 +795,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 4
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
         OpCode::Load.into(), 14, 0, 0, 128, 63,
         OpCode::Copy.into(), 15, 12,
         OpCode::Hlt.into(),
@@ -811,7 +811,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 4
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
         OpCode::WMem.into(), 14, 15, 0, 0, 128, 63, 16,
         OpCode::MemCpy.into(), 55, 50,
         OpCode::RMem.into(), 255, 40, 0, 0, 128, 63, 20,
@@ -828,7 +828,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 4
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
         OpCode::Alloc.into(), 14,   90,
         OpCode::Dealloc.into(),
         OpCode::Hlt.into(),
@@ -843,7 +843,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Load.into(), 14, 0, 0, 200, 65, 
         OpCode::Hlt.into(),
       ]
@@ -854,7 +854,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::AddRI.into(), 14, 15, 0, 0, 32, 65, 
         OpCode::Hlt.into(),]
     );
@@ -864,7 +864,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::AddRR.into(), 14, 14, 15, 
         OpCode::Hlt.into(),
       ]
@@ -875,7 +875,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Load.into(), 14, 0, 0, 160, 193, 
         OpCode::Hlt.into(),
       ]
@@ -886,7 +886,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::RvSubRI.into(), 15, 14, 0, 0, 180, 66, 
         OpCode::Hlt.into(),
       ]
@@ -897,7 +897,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::SubRI.into(), 15, 14, 0, 0, 180, 66, 
         OpCode::Hlt.into(),
       ]
@@ -908,7 +908,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::SubRR.into(), 15, 14, 14, 
         OpCode::Hlt.into(),
       ]
@@ -919,7 +919,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Load.into(), 14, 154, 153, 146, 67, 
         OpCode::Hlt.into(),
       ]
@@ -930,7 +930,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::MulRI.into(), 15, 14, 0, 0, 32, 65, 
         OpCode::Hlt.into(),
       ]
@@ -941,7 +941,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::MulRR.into(), 15, 14, 14, 
         OpCode::Hlt.into(),
       ]
@@ -952,7 +952,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Load.into(), 14, 42, 28, 76, 61, 
         OpCode::Hlt.into(),
       ]
@@ -963,7 +963,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::DivRI.into(), 15, 14, 0, 0, 180, 66, 
         OpCode::Hlt.into(),
       ]
@@ -974,7 +974,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::RvDivRI.into(), 15, 14, 0, 0, 180, 66, 
         OpCode::Hlt.into(),
       ]
@@ -985,7 +985,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::DivRR.into(), 15, 14, 14, 
         OpCode::Hlt.into(),
       ]
@@ -996,7 +996,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Load.into(), 14, 127, 144, 12, 75, 
         OpCode::Hlt.into(),
       ]
@@ -1007,7 +1007,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::PowRI.into(), 15, 14, 0, 0, 180, 66, 
         OpCode::Hlt.into(),
       ]
@@ -1018,7 +1018,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::RvPowRI.into(), 15, 14, 0, 0, 180, 66, 
         OpCode::Hlt.into(),
       ]
@@ -1029,7 +1029,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::PowRR.into(), 15, 14, 14, 
         OpCode::Hlt.into(),
       ]
@@ -1044,14 +1044,14 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     let p = c.compile();
 
     // Check the initial jump target pre-linking was correct
-    assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 0);
+    // assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 0);
     // Check the output is accurate
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 4
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::AddRI.into(), 14, 30, 0, 0, 128, 63,
-        OpCode::Jmp.into(), 0, 0, 160, 64, // Jump to 4
+        OpCode::Jmp.into(), 5, 0, 0, 0, // Jump to 5
         OpCode::Hlt.into()
       ]
     );
@@ -1061,16 +1061,16 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     let p = c.compile();
 
     // Check the initial jump target pre-linking was correct
-    assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 0);
+    // assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 0);
     // Check the output is accurate
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 96, 65, // `main` starts on *14
+        OpCode::Jmp.into(), 14, 0, 0, 0, // `main` starts on 14
         OpCode::SubRR.into(), 16, 94, 233,
         OpCode::Ret.into(), 0, 0, 128, 63,
         OpCode::AddRI.into(), 14, 30, 0, 0, 128, 63,
-        OpCode::Jmp.into(), 0, 0, 96, 65,  // Jump to *14
+        OpCode::Jmp.into(), 14, 0, 0, 0,  // Jump to 14
         OpCode::Hlt.into(),
       ]
     );
@@ -1083,17 +1083,15 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     let mut c = Compiler::new("while true {noop noop noop}",io::stdout());
     let p = c.compile();
 
-    // Check the initial jump target pre-linking was correct
-    assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 0);
     // Check the output is accurate
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 4
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::Noop.into(),
-        OpCode::Jmp.into(), 0, 0, 160, 64, 
+        OpCode::Jmp.into(), 5, 0, 0, 0, 
         OpCode::Hlt.into(),
       ]
     );
@@ -1102,7 +1100,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     let p = Compiler::new("while false {noop noop noop}", io::stdout()).compile();
     assert_eq!(p.as_slice(), 
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 4
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Hlt.into(),
       ]
     );
@@ -1111,46 +1109,35 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     let mut c = Compiler::new("while EQ $15 1 {noop noop noop}", io::stdout());
     let p = c.compile();
 
-    // Check jump to the initial jump to the condition is correct
-    assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 8);
-    // Check jump to the initial jump to 5
-    assert_eq!(c.linker.jmp_targets[1].value.unwrap(), 5);
-
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 4
-        OpCode::Jmp.into(), 0, 0, 80, 65, // Jump to 13
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+        OpCode::Jmp.into(), 13, 0, 0, 0, // Jump to 13
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::CmpRI.into(), CmpFlag::Eq.into(), 15, 0, 0, 128, 63,
-        OpCode::Jnz.into(), EQ as u8, 0, 0, 32, 65, // Jump to 10
+        OpCode::Jnz.into(), EQ as u8, 10, 0, 0, 0, // Jump to 10
         OpCode::Hlt.into()
       ]
     );
 
-    // Test While loop compilation with real condition
+    // Test While loop compiles when binary contains function
     let mut c = Compiler::new("WHILE EQ $15 1 {ADD $15 $15 $54 } FN foo {NOOP NOOP}", io::stdout());
     let p = c.compile();
-
-    // Check jump to the initial jump to the condition is correct
-    assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 9);
-    // Check jump to the initial jump to 5
-    assert_eq!(c.linker.jmp_targets[1].value.unwrap(), 5);
-
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 224, 64, // `main` starts on 7
+        OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
         // foo
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         // Main 
-        OpCode::Jmp.into(), 0, 0, 128, 65,// Jump to 16
+        OpCode::Jmp.into(), 16, 0, 0, 0,// Jump to 16
         OpCode::AddRR.into(), 15, 15, 54,
         OpCode::CmpRI.into(), CmpFlag::Eq.into(), 15, 0, 0, 128, 63,
-        OpCode::Jnz.into(), EQ as u8, 0, 0, 64, 65, // Jump to 12
+        OpCode::Jnz.into(), EQ as u8, 12, 0, 0, 0, // Jump to 12
         OpCode::Hlt.into()
       ]
     );
@@ -1164,21 +1151,21 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     let p = c.compile();   
 
     // Confirm the jump target has the correct pre-link value
-    assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 6);
+    // assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 6);
     // Confirm the region to be replaced is correct
-    assert_eq!(c.linker.jmp_targets[0].region, Region{ start: 25, end: 29 });
+    // assert_eq!(c.linker.jmp_targets[0].region, Region{ start: 25, end: 29 });
     // Check the output is accurate
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Load.into(), LOOP as u8, 0, 0, 0, 0,
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
         OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 0, 65,
-        OpCode::Jz.into(), EQ as u8, 0, 0, 48, 65, // Jump to 11
+        OpCode::Jz.into(), EQ as u8, 11, 0, 0, 0, // Jump to 11
         OpCode::Hlt.into(),
       ]
     );
@@ -1187,15 +1174,11 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     let mut c = Compiler::new("FOR i IN 0..9 {NOOP NOOP NOOP} FN foo {NOOP NOOP}", io::stdout());
     let p = c.compile();  
 
-    // Confirm the jump target has the correct pre-link value
-    assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 6);
-    // Confirm the region to be replaced is correct
-    assert_eq!(c.linker.jmp_targets[0].region, Region{ start: 25, end: 29 });
-    // Check the output is accurate
+    // Check the output is accurate when binary contains a function
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 224, 64, // `main` starts on 7
+        OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
         // This is the function
         OpCode::Noop.into(),
         OpCode::Noop.into(),
@@ -1206,7 +1189,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
         OpCode::Noop.into(),
         OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
         OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 0, 65,
-        OpCode::Jz.into(), EQ as u8, 0, 0, 80, 65, // Jump to 13
+        OpCode::Jz.into(), EQ as u8, 13, 0, 0, 0, // Jump to 13
         OpCode::Hlt.into(),
       ]
     );
@@ -1221,7 +1204,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::Noop.into(),
@@ -1236,7 +1219,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         // Else Block
         OpCode::AddRI.into(), 26, 17, 0, 0, 128, 63,
         // Trailing expression
@@ -1256,17 +1239,17 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // `main` starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
         // IF expression
         OpCode::CmpRI.into(), CmpFlag::Eq.into(), 14, 0, 0, 0, 0,
-        OpCode::Jz.into(), EQ as u8, 0, 0, 176, 65, // Jump to idx 22 if the comparison fails
+        OpCode::Jz.into(), EQ as u8, 22, 0, 0, 0, // Jump to idx 22 if the comparison fails
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::Noop.into(),
         OpCode::Noop.into(),
-        // ELSE expression
+        // ELSE IF expression
         OpCode::CmpRI.into(), CmpFlag::Gt.into(), 15, 0, 0, 128, 63,
-        OpCode::Jz.into(), EQ as u8, 0, 0, 48, 66, // Jump to idx 44 if the comparison fails
+        OpCode::Jz.into(), EQ as u8, 44, 0, 0, 0, // Jump to idx 44 if the comparison fails
         OpCode::Load.into(), 26, 0, 0, 128, 63,
         OpCode::Noop.into(),
         OpCode::Noop.into(),
@@ -1279,20 +1262,20 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
 
   #[test]
   #[rustfmt::skip]
-  fn compile_when_defined(){
-    let mut c = Compiler::new("Sub $54 $34 $65 fn foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30", io::stdout());
+  fn compile_when_single_function_defined(){
+    let mut c = Compiler::new("Sub $54 $34 $65 FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30", io::stdout());
     let p = c.compile();
     // Check the function pointer of `foo` is correct
     match c.table.get(&intern("foo")){
-      Some(VarDecl{ ty: Ty::Function(patch_idx) }) => assert_eq!(*patch_idx, 0),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
       _ => panic!("Should be a function pointer"),
     }
-    
+
     // Check the program is correct
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 152, 65, // `main`'s address is *19
+        OpCode::Jmp.into(), 19, 0, 0, 0, // `main`'s address is 19
         // Beginning of `lib`
         OpCode::AddRR.into(), 14, 14, 15,
         OpCode::Noop.into(),
@@ -1304,30 +1287,24 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
         OpCode::Hlt.into(),
       ]
     );
-
-    // Check the function pointer of `foo` is correct
-    match c.table.get(&intern("foo")){
-      Some(VarDecl{ ty: Ty::Function(patch_idx) }) => assert_eq!(*patch_idx, 0),
-      _ => panic!("Should be a function pointer"),
-    }
   }
 
   #[test]
   #[rustfmt::skip]
-  fn compile_call_when_fn_defined_before(){
+  fn compile_call_when_single_function_defined_before_calling(){
     let mut c = Compiler::new("Sub $54 $34 $65 fn foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30 CALL foo", io::stdout());
     let p = c.compile();
     // Check the function pointer of `foo` is correct
     match c.table.get(&intern("foo")){
-      Some(VarDecl{ ty: Ty::Function(patch_idx) }) => assert_eq!(*patch_idx, 0),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
       _ => panic!("Should be a function pointer"),
     }
-      
+
     // Check the program is correct
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 152, 65, // `main`'s address is *19
+        OpCode::Jmp.into(), 19, 0, 0, 0, // `main`'s address is 19
         // Beginning of `lib`
         OpCode::AddRR.into(), 14, 14, 15,
         OpCode::Noop.into(),
@@ -1336,7 +1313,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
         // Beginning of `main`
         OpCode::SubRR.into(), 54, 34, 65,
         OpCode::DivRR.into(), 65, 58, 30,
-        OpCode::Call.into(), 0, 0, 160, 64, // Call 5
+        OpCode::Call.into(), 5, 0, 0, 0, // Call 5
         OpCode::Hlt.into(),
       ]
     );
@@ -1344,110 +1321,210 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
 
   #[test]
   #[rustfmt::skip]
-  fn compile_when_fn_defined_after_call(){
+  fn compile_when_single_function_defined_after_call(){
     let mut c = Compiler::new("CALL foo SUB $54 $34 $65 CALL foo FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
     let p = c.compile();
     // Check the function pointer of `foo` is correct
     match c.table.get(&intern("foo")){
-      Some(VarDecl{ ty: Ty::Function(patch_idx) }) => assert_eq!(*patch_idx, 0),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
       _ => panic!("Should be a function pointer"),
     }
 
-    // Check region information is correct
-    let regions = c.linker.inner[0].regions().clone();
-    // There should be two elements in region as the `Call` after the definition should use the concrete pointer
-    assert_eq!(regions.len(), 2);
-    // Regions should be 1..5 and 10..14
-    // *after* 18 is added to them since they are calculated relative to `compiler.main` during compilation
-    assert_eq!((regions[0].start, regions[0].end), (1, 5));
-    assert_eq!((regions[1].start, regions[1].end), (10, 14));
+    let expected = [
+      OpCode::Jmp.into(), 19, 0, 0, 0, // `main`'s address is 19
+      // Beginning of `lib`
+      OpCode::AddRR.into(), 14, 14, 15,
+      OpCode::Noop.into(),
+      OpCode::MulRR.into(), 88, 87, 98,
+      OpCode::Ret.into(), 0, 0, 0, 0,
+      // Beginning of `main`
+      OpCode::Call.into(), 5, 0, 0, 0, // Call 5
+      OpCode::SubRR.into(), 54, 34, 65,
+      OpCode::Call.into(), 5, 0, 0, 0, // Call 5
+      OpCode::DivRR.into(), 65, 58, 30,
+      OpCode::Call.into(), 5, 0, 0, 0, // Call 5
+      OpCode::Hlt.into(),
+    ];
 
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 152, 65, // `main`'s address is 24
-        // Beginning of `lib`
-        OpCode::AddRR.into(), 14, 14, 15,
-        OpCode::Noop.into(),
-        OpCode::MulRR.into(), 88, 87, 98,
-        OpCode::Ret.into(), 0, 0, 0, 0,
-        // Beginning of `main`
-        OpCode::Call.into(), 0, 0, 160, 64, // Call 4
-        OpCode::SubRR.into(), 54, 34, 65,
-        OpCode::Call.into(), 0, 0, 160, 64, // Call 4
-        OpCode::DivRR.into(), 65, 58, 30,
-        OpCode::Call.into(), 0, 0, 160, 64, // Call 4
-        OpCode::Hlt.into(),
-      ]
-    );
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
   #[rustfmt::skip]
-  fn compile_when_fn_contains_recursion(){
+  fn compile_when_single_function_contains_recursion(){
     let mut c = Compiler::new("CALL foo FN foo {ADD $14 $14 $15 CALL foo NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
     let p = c.compile();
     // Check the function pointer of `foo` is correct
     match c.table.get(&intern("foo")){
-      Some(VarDecl{ ty: Ty::Function(patch_idx) }) => assert_eq!(*patch_idx, 0),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
       _ => panic!("Should be a function pointer"),
     }
 
-    // Check region information is correct
-    let regions = c.linker.inner[0].regions().clone();
-    // There should be 1 element in Patch 
-    // - The `Call` after the definition should use the concrete pointer
-    // - The recursive call should use the concrete pointer
-    assert_eq!(regions.len(), 1);
-    assert_eq!(regions[0], Region{start:1, end:5});
-
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 192, 65, // `main`'s address is 24
-        // Beginning of `lib`
-        OpCode::AddRR.into(), 14, 14, 15,
-        OpCode::Call.into(), 0, 0, 160, 64, // Call 4
-        OpCode::Noop.into(),
-        OpCode::MulRR.into(), 88, 87, 98,
-        OpCode::Ret.into(), 0, 0, 0, 0,
-        // Beginning of `main`
-        OpCode::Call.into(), 0, 0, 160, 64, // Call 4
-        OpCode::DivRR.into(), 65, 58, 30,
-        OpCode::Call.into(), 0, 0, 160, 64, // Call 4
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 24, 0, 0, 0, // `main`'s address is 24
+      // Beginning of `lib`
+      OpCode::AddRR.into(), 14, 14, 15,
+      OpCode::Call.into(), 5, 0, 0, 0, // Call 5
+      OpCode::Noop.into(),
+      OpCode::MulRR.into(), 88, 87, 98,
+      OpCode::Ret.into(), 0, 0, 0, 0,
+      // Beginning of `main`
+      OpCode::Call.into(), 5, 0, 0, 0, // Call 5
+      OpCode::DivRR.into(), 65, 58, 30,
+      OpCode::Call.into(), 5, 0, 0, 0, // Call 5
+      OpCode::Hlt.into(),
+    ];
+    
+    assert_eq!(p.as_slice(), expected);
 
   }
 
   #[test]
   #[rustfmt::skip]
-  #[should_panic = "\x1b[93mUNAVAILABLE FUNCTION NAME:\x1b[0m The name foo is already in use."]
-  fn function_panics_when_name_in_use() {
-  
+  fn compile_when_multiple_functions_defined(){
+    let src = "FN foo {ADD $14 $60 $37 RET 3} FN bar {POW $67 $64 $75 RET 2}";
+    let mut c = Compiler::new(src, io::stdout());
+    let p = c.compile();
 
+    // Check the function pointer of `foo` is correct
+    let foo_fn_idx = &intern("foo");
+    assert_eq!(foo_fn_idx, &0);
+    match c.table.get(foo_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    // Check the function pointer of `bar` is correct
+    let bar_fn_idx = &intern("bar");
+    assert_eq!(bar_fn_idx, &1);
+    match c.table.get(bar_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [14, 0, 0, 0]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    let expected = [
+      OpCode::Jmp.into(), 23, 0, 0, 0, // `main` starts at 23
+      OpCode::AddRR.into(), 14, 60, 37, // `foo` starts at 5
+      OpCode::Ret.into(), 0, 0, 64, 64,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 14
+      OpCode::Ret.into(), 0, 0, 0, 64,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
+  }
+
+  #[test]
+  #[rustfmt::skip]
+  fn compile_call_when_multiple_functions_defined_before_calling(){
+    let src = "FN foo {ADD $14 $60 $37 RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar";
+    let mut c = Compiler::new(src, io::stdout());
+    let p = c.compile();
+    
+    // Check the function pointer of `foo` is correct
+    let foo_fn_idx = &intern("foo");
+    assert_eq!(foo_fn_idx, &0);
+    match c.table.get(foo_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    // Check the function pointer of `bar` is correct
+    let bar_fn_idx = &intern("bar");
+    assert_eq!(bar_fn_idx, &1);
+    match c.table.get(bar_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [14, 0, 0, 0]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    let expected = [
+      OpCode::Jmp.into(),  23, 0, 0, 0, // `main` starts at 23
+      OpCode::AddRR.into(),  14, 60, 37, // `foo` starts at 5
+      OpCode::Ret.into(), 0, 0, 64, 64,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 14
+      OpCode::Ret.into(), 0, 0, 0, 64,
+      // Call foo
+      OpCode::Call.into(), 5, 0, 0, 0,
+      // Call bar
+      OpCode::Call.into(), 14, 0, 0, 0,
+      OpCode::Hlt.into(),
+    ];
+
+    assert_eq!(p.as_slice(), expected);
+  }
+
+  #[test]
+  #[rustfmt::skip]
+  fn compile_when_multiple_functions_defined_after_call(){
+    let mut c = Compiler::new("CALL bar CALL foo FN foo {ADD $14 $60 $37 RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar", io::stdout());
+    let p = c.compile();
+
+    // Check the function pointer of `foo` is correct
+    let foo_fn_idx = &intern("foo");
+    assert_eq!(foo_fn_idx, &1);
+    match c.table.get(foo_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    // Check the function pointer of `bar` is correct
+    let bar_fn_idx = &intern("bar");
+    assert_eq!(bar_fn_idx, &0);
+    match c.table.get(bar_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [14, 0, 0, 0]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    // Check the binary is correct
+    let expected = [
+      OpCode::Jmp.into(), 23, 0, 0, 0, // `main` starts at 23
+      OpCode::AddRR.into(), 14, 60, 37, // `foo` starts at 5
+      OpCode::Ret.into(), 0, 0, 64, 64,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 14
+      OpCode::Ret.into(), 0, 0, 0, 64,
+      // Call bar
+      OpCode::Call.into(), 14, 0, 0, 0,
+      // Call foo
+      OpCode::Call.into(), 5, 0, 0, 0,
+      // Call foo
+      OpCode::Call.into(), 5, 0, 0, 0,
+      // Call bar
+      OpCode::Call.into(), 14, 0, 0, 0,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
+  }
+  
+  #[test]
+  #[rustfmt::skip]
+  #[should_panic = "\x1b[93mUNAVAILABLE FUNCTION NAME:\x1b[0m The name foo is already in use."]
+  fn function_errors_when_name_in_use() {
     // Test fuction name reuse fails
     let _ = Compiler::new("FN foo {ADD $14 $14 4} FN foo {NOOP NOOP}", io::stdout()).compile();
   }
 
   #[test]
   #[rustfmt::skip]
+  #[should_panic = "\x1b[93mUNDEFINED FUNCTION:\x1b[0m Cannot use foo (idx:5, ln:1, col:6) without defining it."]
+  fn function_errors_when_not_defined(){
+    // Test fuction name reuse fails
+    let _ = Compiler::new("CALL foo", io::stdout()).compile();
+  }
+
+  #[test]
+  #[rustfmt::skip]
   fn compile_syscall() {
-    // TODO: Make it so syscalls can also be called using "call"
     let mut compiler = Compiler::new("syscall foo", io::stdout());
     compiler
       .read_header("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test_header.hd",);
 
     let p = compiler.compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::SysCall.into(), 0,
-        OpCode::Hlt.into()
-      ]
-    );
+
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::SysCall.into(), 0,
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1455,17 +1532,15 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
   fn compile_push_pop() {
     let p = Compiler::new("Push $1 Push $1 Pop PopR $16", io::stdout()).compile();
 
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::Push.into(), 1, 
-        OpCode::Push.into(), 1,
-        OpCode::Pop.into(),
-        OpCode::PopR.into(), 16,
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::Push.into(), 1, 
+      OpCode::Push.into(), 1,
+      OpCode::Pop.into(),
+      OpCode::PopR.into(), 16,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1473,34 +1548,31 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
   fn compile_eq() {
     // EQII
     let p = Compiler::new("eq 2 2", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
-        OpCode::Hlt.into()
-      ]
-    );
+
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
+      OpCode::Hlt.into()
+    ]; 
+    assert_eq!(p.as_slice(), expected);
+
     // EQIR
     let p = Compiler::new("eq $14 1", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRI.into(), CmpFlag::Eq.into(), 14, 0, 0, 128, 63, 
-        OpCode::Hlt.into()
-      ]
-    );
+    
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRI.into(), CmpFlag::Eq.into(), 14, 0, 0, 128, 63, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
     // EQRR
     let p = Compiler::new("eq $14 $15", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRR.into(), CmpFlag::Eq.into(), 14, 15, 
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRR.into(), CmpFlag::Eq.into(), 14, 15, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1508,45 +1580,40 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
   fn compile_geq(){
     // GEQII
     let p = Compiler::new("geq 4 2", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
-        OpCode::Hlt.into()
-        ]
-      );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // GEQRI
     let p = Compiler::new("geq $14 1", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRI.into(), CmpFlag::Geq.into(), 14, 0, 0, 128, 63, 
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRI.into(), CmpFlag::Geq.into(), 14, 0, 0, 128, 63, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // GEQIR
     let p = Compiler::new("geq 1 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRI.into(), CmpFlag::Geq.into(), 14, 0, 0, 128, 63,
-        OpCode::Not.into(), EQ as u8, EQ as u8,
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRI.into(), CmpFlag::Geq.into(), 14, 0, 0, 128, 63,
+      OpCode::Not.into(), EQ as u8, EQ as u8,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // GEQRR
     let p = Compiler::new("geq $15 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRR.into(), CmpFlag::Geq.into(), 15, 14, 
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRR.into(), CmpFlag::Geq.into(), 15, 14, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1554,44 +1621,39 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
   fn compile_leq(){
     // LEQII
     let p = Compiler::new("leq 4 2", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::Load.into(), EQ as u8, 0, 0, 0, 0, OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::Load.into(), EQ as u8, 0, 0, 0, 0, OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // LEQRI
     let p = Compiler::new("leq $14 1", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRI.into(), CmpFlag::Leq.into(), 14, 0, 0, 128, 63, 
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRI.into(), CmpFlag::Leq.into(), 14, 0, 0, 128, 63, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // LEQIR
     let p = Compiler::new("leq 1 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRI.into(), CmpFlag::Leq.into(), 14, 0, 0, 128, 63,
-        OpCode::Not.into(), EQ as u8, EQ as u8,
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRI.into(), CmpFlag::Leq.into(), 14, 0, 0, 128, 63,
+      OpCode::Not.into(), EQ as u8, EQ as u8,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // LEQRR
     let p = Compiler::new("leq $15 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRR.into(), CmpFlag::Leq.into(), 15, 14, 
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRR.into(), CmpFlag::Leq.into(), 15, 14, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
   
   #[test]
@@ -1599,44 +1661,40 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
   fn compile_gt(){
     // GTII
     let p = Compiler::new("gt 4 2", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
-        OpCode::Hlt.into()
-      ]);
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // GTRI
     let p = Compiler::new("gt $14 1", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRI.into(), CmpFlag::Gt.into(), 14, 0, 0, 128, 63, 
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRI.into(), CmpFlag::Gt.into(), 14, 0, 0, 128, 63, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // GTIR
     let p = Compiler::new("gt 1 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRI.into(), CmpFlag::Gt.into(), 14, 0, 0, 128, 63,
-        OpCode::Not.into(), EQ as u8, EQ as u8,
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRI.into(), CmpFlag::Gt.into(), 14, 0, 0, 128, 63,
+      OpCode::Not.into(), EQ as u8, EQ as u8,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
+
     // GTRR
     let p = Compiler::new("gt $15 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
-        OpCode::CmpRR.into(), CmpFlag::Gt.into(), 15, 14, 
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
+      OpCode::CmpRR.into(), CmpFlag::Gt.into(), 15, 14, 
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1647,7 +1705,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(), 
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
         OpCode::Load.into(), EQ as u8, 0, 0, 0, 0, 
         OpCode::Hlt.into()
       ]
@@ -1658,7 +1716,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
         OpCode::CmpRI.into(), CmpFlag::Lt.into(), 14, 0, 0, 128, 63, 
         OpCode::Hlt.into()
       ]
@@ -1669,7 +1727,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(),
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
         OpCode::CmpRI.into(), CmpFlag::Lt.into(), 14, 0, 0, 128, 63,
         OpCode::Not.into(), EQ as u8, EQ as u8,
         OpCode::Hlt.into(),
@@ -1681,7 +1739,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
     assert_eq!(
       p.as_slice(), 
       [
-        OpCode::Jmp.into(), 0, 0, 160, 64, // main starts on 5
+        OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
         OpCode::CmpRR.into(), CmpFlag::Lt.into(), 15, 14, 
         OpCode::Hlt.into()
       ]
@@ -1689,21 +1747,13 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
   }
 
   #[test]
-  fn eat_instruction_works() {
-    let src = include_str!("full_compilation_test.spdr");
-    let p = Compiler::new(src, io::stdout()).eat_compile();
-    assert_eq!(p.as_slice(), []);
-  }
-
-  #[test]
   #[rustfmt::skip]
   fn compile_all_commands() {
-    let src = include_str!("full_compilation_test.spdr");
+    let src = include_str!("../src/test/full_compilation_test.spdr");
     let p = Compiler::new(src, io::stdout()).compile();
 
-
     let expected = [
-      OpCode::Jmp.into(), 0, 0, 136, 65, // Jump to 17
+      OpCode::Jmp.into(), 17, 0, 0, 0, // Jump to 17
       // Fn
       OpCode::RvSubRI.into(), 13, 90, 0, 0, 112, 65,
       OpCode::Ret.into(), 0, 0, 64, 64,
@@ -1727,14 +1777,14 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
       OpCode::Noop.into(),
       OpCode::Noop.into(),
       OpCode::Noop.into(),
-      OpCode::Jmp.into(), 0, 0, 168, 66, // Jump to 84
+      OpCode::Jmp.into(), 84, 0, 0, 0, // Jump to 84
       // While loop
-      OpCode::Jmp.into(), 0, 0, 236, 66, // Jump to 118
+      OpCode::Jmp.into(), 118, 0, 0, 0, // Jump to 118
       OpCode::AddRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::AddRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::AddRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::CmpRR.into(), CmpFlag::Leq.into(), 14, 16,
-      OpCode::Jnz.into(), EQ as u8, 0, 0, 194, 66, // Jump to 97
+      OpCode::Jnz.into(), EQ as u8, 97, 0, 0, 0, // Jump to 97
       // For Loop
       OpCode::Load.into(), LOOP as u8, 0, 0, 0, 0,
       OpCode::SubRI.into(), 14, 13, 0, 0, 128, 63,
@@ -1742,7 +1792,7 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
       OpCode::SubRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
       OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 16, 65,
-      OpCode::Jz.into(), EQ as u8, 0, 0, 6, 67, // Jump to 134
+      OpCode::Jz.into(), EQ as u8, 134, 0, 0, 0, // Jump to 134
       // Memory manipulation
       OpCode::Push.into(), 15,
       OpCode::Pop.into(),
@@ -1754,40 +1804,114 @@ use crate::{defered_patch::Region, interner::intern, Compiler, Ty, VarDecl};
       OpCode::Dealloc.into(),
       // If
       OpCode::CmpRI.into(), CmpFlag::Gt.into(), 15, 0, 0, 96, 65,
-      OpCode::Jz.into(), EQ as u8, 0, 0, 87, 67, // Jump to 215
-      OpCode::Call.into(),  0, 0, 160, 64, // Jump to 9
+      OpCode::Jz.into(), EQ as u8, 215, 0, 0, 0, // Jump to 215
+      OpCode::Call.into(), 5, 0, 0, 0, // Jump to 5
       // Else If
       OpCode::CmpRI.into(), CmpFlag::Lt.into(), 15, 0, 0, 96, 65,
-      OpCode::Jz.into(), EQ as u8,  0, 0, 103, 67, // Jump to 231
+      OpCode::Jz.into(), EQ as u8, 231, 0, 0, 0, // Jump to 231
       OpCode::Noop.into(),
       OpCode::Noop.into(),
       OpCode::Noop.into(),
       OpCode::Hlt.into(),
     ];
 
-    // Do an assert
     assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
   fn execute_simple_scripts() {
-    todo!("Test scripts execute in the VM, some modifications will be needed to brin the VM in line with the new ISA")
+    //Testing a while loop
+    let src = include_str!("../src/test/basic_script_while_loop.spdr");
+    let mut w = io::stdout();
+    let program = Compiler::new(src, &mut w).compile();
+
+    let mut vm = VM::new();
+    vm.upload(program);
+    vm.run();
+
+    assert_eq!(vm.dbg_reg(15).as_f32(), 9.0);
+
+    // Testing a function called
+    let src = include_str!("../src/test/basic_script_function.spdr");
+    let mut w = io::stdout();
+    let program = Compiler::new(src, &mut w).compile();
+
+    let mut vm = VM::new();
+    vm.upload(program);
+    vm.dbg_run(&mut w);
+
+    // Foo is the equivalent of this function so test against each other 
+    fn foo(a:f32, b:f32) -> f32 {
+      let mut c = a * b;
+      c += 30.543;
+      c
+    }
+
+    // TODO: Some error with skipping the final copy.
+    // Need to check VM to see the value of the return address
+    // Number in $4 is correct so the function executes properly
+
+    assert_eq!(vm.dbg_reg(15).as_f32(), foo(5.4, 13.222));
+
+    // Test an external function call
+  }
+
+  // This always has to be at the end. 
+  // Because it has foo and bar in different orders and one run of the program shares the same interner
+  // it messes up the interned strings for every other test
+  #[test]
+  #[rustfmt::skip]
+  fn compile_multiple_functions_when_one_calls_other_before_other_defined(){
+    let mut c = Compiler::new("CALL bar CALL foo FN foo {CALL bar RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar", io::stdout());
+    let p = c.compile();
+    
+    // Check the function pointer of `foo` is correct
+    let foo_fn_idx = &intern("foo");
+    assert_eq!(foo_fn_idx, &1);
+    match c.table.get(foo_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [0, 0, 160, 64]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    // Check the function pointer of `bar` is correct
+    let bar_fn_idx = &intern("bar");
+    assert_eq!(bar_fn_idx, &0);
+    match c.table.get(bar_fn_idx){
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [0, 0, 112, 65]),
+      _ => panic!("Should be a function pointer"),
+    }
+
+    // Check the binary is correct
+    let expected = [
+      OpCode::Jmp.into(),  0, 0, 192, 65, // `main` starts at 24
+      // Call bar
+      OpCode::Call.into(), 0, 0, 112, 65, // `foo` starts at 5
+      OpCode::Ret.into(), 0, 0, 64, 64,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 15
+      OpCode::Ret.into(), 0, 0, 0, 64,
+      // Call bar
+      OpCode::Call.into(), 0, 0, 112, 65,
+      // Call foo
+      OpCode::Call.into(), 0, 0, 160, 64,
+      // Call foo
+      OpCode::Call.into(), 0, 0, 160, 64,
+      // Call bar
+      OpCode::Call.into(), 0, 0, 112, 65,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   impl<'tcx,> Compiler<'tcx,> {
     /// Method created to test `self.eat_current_instruction()` works.
     fn eat_compile(&mut self,) -> Program {
       // Iterate over each each and interpret it as an opcode
-      while let Some(instruction,) = self.next_token() {
-        self.current_instruction = Some(instruction,);
+      while let Some(_,) = self.next_token() {
         // Match the instruction
         self.eat_current_instruction();
       }
-
-      let mut out = self.main.clone();
-      self.linker.link(&mut out, &self.lib);
       // Once all lines are compiled return the program
-      return out;
+      return self.main.clone();
     }
   }
 }

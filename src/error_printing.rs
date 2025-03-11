@@ -45,8 +45,9 @@ mod test {
 
   #[test]
   fn error_printing_from_raw_input() {
-    let src =
-      include_str!("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\spdr_error_test.spdr");
+    let src = include_str!(
+      "C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test\\spdr_error_test.spdr"
+    );
     let start = Location { idx:8, ln:1, col:9, };
     let end = Location {
       idx:11, ln:1, col:12,

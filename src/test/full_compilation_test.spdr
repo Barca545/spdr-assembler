@@ -1,0 +1,47 @@
+LOAD $14 1
+COPY $14 $16
+NOT $14 $15
+ADD $14 $13 1
+SUB $14 $13 1
+MUL $14 $13 1
+DIV $14 $13 1
+POW $14 $13 1
+EQ $14 $16
+GT $14 $16
+LT $14 $16
+GEQ $14 $16
+LEQ $14 $16
+LOOP {
+  NOOP
+  NOOP
+  NOOP
+}
+WHILE LEQ $14 $16 {
+  ADD $14 $13 1
+  ADD $14 $13 1
+  ADD $14 $13 1
+}
+FOR i IN 0..10 {
+ SUB $14 $13 1
+  NOOP
+  SUB $14 $13 1
+}
+PUSH $15
+POP
+POPR $14
+WMEM $14 $15 10 $10
+RMEM $14 $15 10 $10
+MEMCPY $16 $18
+ALLOC $16 $18
+DEALLOC
+IF GT $15 14 {
+  CALL bar
+} ELSE IF LT $15 14 {
+  NOOP
+  NOOP
+  NOOP
+}
+FN bar {
+  SUB $13 15 $90
+  RET 3
+}

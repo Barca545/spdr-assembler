@@ -1,6 +1,6 @@
 /target
-*.hd
+.hd
 *.txt
-*.spdr
 .vscode
 Todo.md
+update-spdr-deps.bash

@@ -36,6 +36,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -73,18 +84,31 @@ name = "spdr-assembler"
 version = "0.1.0"
 dependencies = [
  "eyre",
- "spdr_isa",
- "thiserror",
+ "spdr-isa",
+ "spdr-vm",
+ "thiserror 2.0.11",
 ]
 
 [[package]]
-name = "spdr_isa"
+name = "spdr-isa"
 version = "0.1.0"
-source = "git+https://github.com/Barca545/spdr_isa.git?rev=cb2060c93b6fc7ea9195afb365e3ef0fe5946cbb#cb2060c93b6fc7ea9195afb365e3ef0fe5946cbb"
+source = "git+https://github.com/Barca545/spdr-isa.git?rev=97808963f20a30ec997ce2a96704c67051669da4#97808963f20a30ec997ce2a96704c67051669da4"
 dependencies = [
  "eyre",
- "num-derive",
+ "num-derive 0.4.2",
  "num-traits",
+]
+
+[[package]]
+name = "spdr-vm"
+version = "0.1.0"
+source = "git+https://github.com/Barca545/spdr-vm.git?rev=aa7ccf8f5bfdf59a87317122bc3a943083bdd464#aa7ccf8f5bfdf59a87317122bc3a943083bdd464"
+dependencies = [
+ "eyre",
+ "num-derive 0.3.3",
+ "num-traits",
+ "spdr-isa",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -111,11 +135,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d452f284b73e6d76dd36758a0c8684b1d5be31f92b89d07fd5822175732206fc"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.11",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
 ]
 
 [[package]]
