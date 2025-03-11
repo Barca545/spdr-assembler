@@ -23,21 +23,15 @@ use tokenizer::{Lexer, Span, Token, TokenKind};
 //   unwrapping next. It would be better to handle the `Option`. Probably as
 //   simple as returning an error if the unwrap fails that says expected X/Y/Z
 //   tokens
-// - Currently all variables are global. Each scope (block and function def)
 //   should recieve its own symbol table to prevent this
 // - Eventually I should sub out usizes and choose some number that is platform
 //   independent
 // - I think there has to be a better way of storing the src to print than
 //   storing it in the compiler like that. maybe just intern the whole thing and
 //   reference it that way
-// - Does the iterator need to be peekable? Do I ever use peeking?
-// - Need to add a halt before the fns are placed in the binary.
-// - Need to store the fns and them stick them at the end, get their location
-//   and patch
 // - `compile_block_return` can be implemented way more efficiently
-// - Currently All identifiers must be unique. I am not actually sure this
+// - Currently all identifiers must be unique. I am not actually sure this
 //   bothers me.
-// - Next token can also set care of setting the current token instead of having the loop do that. or just make current token a function instead of a field. Dealer's choice.
 
 
 // TODO:
@@ -47,10 +41,9 @@ use tokenizer::{Lexer, Span, Token, TokenKind};
 //   Then state otherwise.
 
 // Compiler Rules
-// - Names must be unique
 // - LOOP/WHILE/FOR must have their own lines
 // - The beginning and end of blocks need their own lines
-// - All variables are global
+// - All variables are global. Names must be unique
 
 fn main() {
   let args = env::args().collect::<Vec<String,>>();
