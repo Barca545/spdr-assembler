@@ -95,10 +95,9 @@ impl<'tcx,> Compiler<'tcx,> {
 
 #[cfg(test)]
 mod test {
-  use spdr_isa::program::Program;
-
   use super::PatchData;
   use crate::patch::{Patch, Region};
+  use spdr_isa::program::Program;
 
   #[test]
   fn patch_works_for_multiple_regions() {
@@ -122,13 +121,13 @@ mod test {
     patch_1.patch(&mut program,);
 
     // Check the content is correct
-    assert!(matches!(patch_1.content, PatchData::Address([0, 0, 160, 64,])));
-    assert!(matches!(patch_2.content, PatchData::Address([0, 0, 128, 63,])));
+    assert!(matches!(patch_1.content, PatchData::Address([5, 0, 0, 0,])));
+    assert!(matches!(patch_2.content, PatchData::Address([1, 0, 0, 0,])));
 
     // Check the program is correct
     assert_eq!(
       program.as_slice(),
-      [0, 0, 160, 64, 0, 0, 128, 63, 0, 0, 160, 64, 0, 0, 128, 63, 0, 0, 128, 63,]
+      [5, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,]
     );
   }
 

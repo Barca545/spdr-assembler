@@ -11,4 +11,4 @@ thiserror = "2.0.11"
 spdr-isa = {git = "https://github.com/Barca545/spdr-isa.git", rev = "97808963f20a30ec997ce2a96704c67051669da4"}
 
 [dev-dependencies]
-spdr-vm = {git = "https://github.com/Barca545/spdr-vm.git", rev = "aa7ccf8f5bfdf59a87317122bc3a943083bdd464"}
+spdr-vm = {git = "https://github.com/Barca545/spdr-vm.git", rev = "bc0b8ef013548bbbf04d5bd1037b4fec413c334d"}

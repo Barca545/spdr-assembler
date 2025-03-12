@@ -37,8 +37,6 @@ use tokenizer::{Lexer, Span, Token, TokenKind};
 // TODO:
 // - Jump instructions should accept labels as arguments
 // - Add array compilation
-// - Add note to opcodes that all immediates are 4bytes unless otherwise stated.
-//   Then state otherwise.
 
 // Compiler Rules
 // - LOOP/WHILE/FOR must have their own lines
@@ -78,7 +76,6 @@ enum Ty {
   Label(usize,),
   /// Functions hold the function's address as a `[u8;4]`;
   Function([u8;4]),
-  
   /// Functions hold the index the VM where stores them in its collection of
   /// external functions.
   ExternalFunction(u8,),
@@ -691,8 +688,13 @@ impl<'tcx,> Compiler<'tcx,> {
       TokenKind::Dealloc => self.main.extend_from_slice(&[OpCode::Dealloc.into(),],),
       TokenKind::Ret => {
         // Number of items to pop from the stack when returning
-        let pop_number = self.next_token_as_immediate_array();
-        self.main.extend_from_slice(&[ OpCode::Ret.into(), pop_number[0], pop_number[1], pop_number[2], pop_number[3],],);
+        let pop_number = match self.next_token(){
+            Some(Token { kind:TokenKind::Num(num), .. }) => num as u8,
+            None => unreachable!("Must have a token"),
+            // TODO: Make real error
+            Some(Token { kind, span}) => panic!("{} {} is not a number, expected number after `Ret`.", kind, span.start),
+        };
+        self.main.extend_from_slice(&[ OpCode::Ret.into(), pop_number,],);
       }
       TokenKind::Eof => {}
       _ => panic!(
@@ -745,20 +747,19 @@ impl<'tcx,> Compiler<'tcx,> {
 #[cfg(test)]
 mod test {
   use std::io;
-
-use crate::{interner::intern, Compiler, Ty, VarDecl};
+  use crate::{interner::intern, Compiler, Ty, VarDecl};
   use spdr_isa::{
     opcodes::{CmpFlag, OpCode},
     program::Program,
     registers::{EQ, LOOP},
   };
-use spdr_vm::vm::VM;
+  use spdr_vm::vm::VM;
 
   #[test]
   fn load_header() {
     //TODO: Figure out why this does not import partial header paths
     let mut compiler = Compiler::new("",io::stdout());
-    compiler.read_header("../src/test/test_header.hd",);
+    compiler.read_header("../spdr-assembler/src/test/test_header.hd",);
 
     let decl_1 = match compiler.table.get(&intern("foo",),).unwrap().ty {
       Ty::ExternalFunction(idx,) => idx,
@@ -785,15 +786,13 @@ use spdr_vm::vm::VM;
   fn compile_load_cpy() {
     let p = Compiler::new("Load $14 1 Copy $15 $12",io::stdout()).compile();
 
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
-        OpCode::Load.into(), 14, 0, 0, 128, 63,
-        OpCode::Copy.into(), 15, 12,
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
+      OpCode::Load.into(), 14, 0, 0, 128, 63,
+      OpCode::Copy.into(), 15, 12,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -801,16 +800,14 @@ use spdr_vm::vm::VM;
   fn compile_memcpy_rmem_wmem() {
     let p = Compiler::new("wmem $14 $15 1 $16 memcpy $55 $50 rmem $255 $40 1 $20",io::stdout()).compile();
 
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
-        OpCode::WMem.into(), 14, 15, 0, 0, 128, 63, 16,
-        OpCode::MemCpy.into(), 55, 50,
-        OpCode::RMem.into(), 255, 40, 0, 0, 128, 63, 20,
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
+      OpCode::WMem.into(), 14, 15, 0, 0, 128, 63, 16,
+      OpCode::MemCpy.into(), 55, 50,
+      OpCode::RMem.into(), 255, 40, 0, 0, 128, 63, 20,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -818,215 +815,178 @@ use spdr_vm::vm::VM;
   fn compile_alloc_dealloc() {
     let p = Compiler::new("Alloc $14 $90 Dealloc", io::stdout()).compile();
 
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
-        OpCode::Alloc.into(), 14,   90,
-        OpCode::Dealloc.into(),
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
+      OpCode::Alloc.into(), 14,   90,
+      OpCode::Dealloc.into(),
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
   fn compile_arith() {
     // ADDII
     let p = Compiler::new("ADD $14 15 10", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Load.into(), 14, 0, 0, 200, 65, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Load.into(), 14, 0, 0, 200, 65, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // ADDRI
     let p = Compiler::new("ADD $14 $15 10", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::AddRI.into(), 14, 15, 0, 0, 32, 65, 
-        OpCode::Hlt.into(),]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::AddRI.into(), 14, 15, 0, 0, 32, 65, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // ADDRR
     let p = Compiler::new("ADD $14 $14 $15", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::AddRR.into(), 14, 14, 15, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::AddRR.into(), 14, 14, 15, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // SUBII
     let p = Compiler::new("SUB $14 10 30", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Load.into(), 14, 0, 0, 160, 193, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Load.into(), 14, 0, 0, 160, 193, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // SUBIR
     let p = Compiler::new("SUB $15 90 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::RvSubRI.into(), 15, 14, 0, 0, 180, 66, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::RvSubRI.into(), 15, 14, 0, 0, 180, 66, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // SUBRI
     let p = Compiler::new("SUB $15 $14 90", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::SubRI.into(), 15, 14, 0, 0, 180, 66, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::SubRI.into(), 15, 14, 0, 0, 180, 66, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // SUBRR
     let p = Compiler::new("SUB $15 $14 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::SubRR.into(), 15, 14, 14, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::SubRR.into(), 15, 14, 14, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // MULII
     let p = Compiler::new("MUL $14 10 29.32", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Load.into(), 14, 154, 153, 146, 67, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Load.into(), 14, 154, 153, 146, 67, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // MULRI
     let p = Compiler::new("MUL $15 $14 10", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::MulRI.into(), 15, 14, 0, 0, 32, 65, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::MulRI.into(), 15, 14, 0, 0, 32, 65, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // MULRR
     let p = Compiler::new("MUL $15 $14 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::MulRR.into(), 15, 14, 14, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::MulRR.into(), 15, 14, 14, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // DIVII
     let p = Compiler::new("DIV $14 32.54 653", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Load.into(), 14, 42, 28, 76, 61, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Load.into(), 14, 42, 28, 76, 61, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // DIVRI
     let p = Compiler::new("DIV $15 $14 90", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::DivRI.into(), 15, 14, 0, 0, 180, 66, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::DivRI.into(), 15, 14, 0, 0, 180, 66, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // DIVIR
     let p = Compiler::new("DIV $15 90 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::RvDivRI.into(), 15, 14, 0, 0, 180, 66, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::RvDivRI.into(), 15, 14, 0, 0, 180, 66, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // DIVRR
     let p = Compiler::new("DIV $15 $14 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::DivRR.into(), 15, 14, 14, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::DivRR.into(), 15, 14, 14, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // POWII
     let p = Compiler::new("POW $14 76.253216 3.7", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Load.into(), 14, 127, 144, 12, 75, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Load.into(), 14, 127, 144, 12, 75, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // POWRI
     let p = Compiler::new("POW $15 $14 90", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::PowRI.into(), 15, 14, 0, 0, 180, 66, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::PowRI.into(), 15, 14, 0, 0, 180, 66, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // POWIR
     let p = Compiler::new("POW $15 90 $14",io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::RvPowRI.into(), 15, 14, 0, 0, 180, 66, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::RvPowRI.into(), 15, 14, 0, 0, 180, 66, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // PowRR
     let p = Compiler::new("POW $15 $14 $14", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::PowRR.into(), 15, 14, 14, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::PowRR.into(), 15, 14, 14, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1036,37 +996,29 @@ use spdr_vm::vm::VM;
     let mut c = Compiler::new("Loop {ADD $14 $30 1}", io::stdout());
     let p = c.compile();
 
-    // Check the initial jump target pre-linking was correct
-    // assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 0);
     // Check the output is accurate
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::AddRI.into(), 14, 30, 0, 0, 128, 63,
-        OpCode::Jmp.into(), 5, 0, 0, 0, // Jump to 5
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::AddRI.into(), 14, 30, 0, 0, 128, 63,
+      OpCode::Jmp.into(), 5, 0, 0, 0, // Jump to 5
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // Test plain loop compilation with function at beginning
     let mut c = Compiler::new("Loop {ADD $14 $30 1} FN foo {SUB $16 $94 $233 RET 1}", io::stdout());
     let p = c.compile();
 
-    // Check the initial jump target pre-linking was correct
-    // assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 0);
     // Check the output is accurate
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 14, 0, 0, 0, // `main` starts on 14
-        OpCode::SubRR.into(), 16, 94, 233,
-        OpCode::Ret.into(), 0, 0, 128, 63,
-        OpCode::AddRI.into(), 14, 30, 0, 0, 128, 63,
-        OpCode::Jmp.into(), 14, 0, 0, 0,  // Jump to 14
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 11, 0, 0, 0, // `main` starts on 11
+      OpCode::SubRR.into(), 16, 94, 233,
+      OpCode::Ret.into(), 1,
+      OpCode::AddRI.into(), 14, 30, 0, 0, 128, 63,
+      OpCode::Jmp.into(), 11, 0, 0, 0,  // Jump to 11
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1077,63 +1029,57 @@ use spdr_vm::vm::VM;
     let p = c.compile();
 
     // Check the output is accurate
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Jmp.into(), 5, 0, 0, 0, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Jmp.into(), 5, 0, 0, 0, 
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // Test While loop compilation when `false`
     let p = Compiler::new("while false {noop noop noop}", io::stdout()).compile();
-    assert_eq!(p.as_slice(), 
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // Test While loop compilation with real condition
     let mut c = Compiler::new("while EQ $15 1 {noop noop noop}", io::stdout());
     let p = c.compile();
 
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Jmp.into(), 13, 0, 0, 0, // Jump to 13
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::CmpRI.into(), CmpFlag::Eq.into(), 15, 0, 0, 128, 63,
-        OpCode::Jnz.into(), EQ as u8, 10, 0, 0, 0, // Jump to 10
-        OpCode::Hlt.into()
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Jmp.into(), 13, 0, 0, 0, // Jump to 13
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::CmpRI.into(), CmpFlag::Eq.into(), 15, 0, 0, 128, 63,
+      OpCode::Jnz.into(), EQ as u8, 10, 0, 0, 0, // Jump to 10
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
 
     // Test While loop compiles when binary contains function
     let mut c = Compiler::new("WHILE EQ $15 1 {ADD $15 $15 $54 } FN foo {NOOP NOOP}", io::stdout());
     let p = c.compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
-        // foo
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        // Main 
-        OpCode::Jmp.into(), 16, 0, 0, 0,// Jump to 16
-        OpCode::AddRR.into(), 15, 15, 54,
-        OpCode::CmpRI.into(), CmpFlag::Eq.into(), 15, 0, 0, 128, 63,
-        OpCode::Jnz.into(), EQ as u8, 12, 0, 0, 0, // Jump to 12
-        OpCode::Hlt.into()
-      ]
-    );
+    
+    let expected = [
+      OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
+      // foo
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      // Main 
+      OpCode::Jmp.into(), 16, 0, 0, 0,// Jump to 16
+      OpCode::AddRR.into(), 15, 15, 54,
+      OpCode::CmpRI.into(), CmpFlag::Eq.into(), 15, 0, 0, 128, 63,
+      OpCode::Jnz.into(), EQ as u8, 12, 0, 0, 0, // Jump to 12
+      OpCode::Hlt.into()
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1143,11 +1089,6 @@ use spdr_vm::vm::VM;
     let mut c = Compiler::new("for i in 0..9 {noop noop noop}", io::stdout());
     let p = c.compile();   
 
-    // Confirm the jump target has the correct pre-link value
-    // assert_eq!(c.linker.jmp_targets[0].value.unwrap(), 6);
-    // Confirm the region to be replaced is correct
-    // assert_eq!(c.linker.jmp_targets[0].region, Region{ start: 25, end: 29 });
-    // Check the output is accurate
     assert_eq!(
       p.as_slice(),
       [
@@ -1167,25 +1108,24 @@ use spdr_vm::vm::VM;
     let mut c = Compiler::new("FOR i IN 0..9 {NOOP NOOP NOOP} FN foo {NOOP NOOP}", io::stdout());
     let p = c.compile();  
 
+    let expected = [
+      OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
+      // This is the function
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      // This is main
+      OpCode::Load.into(), LOOP as u8, 0, 0, 0, 0,
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
+      OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 0, 65,
+      OpCode::Jz.into(), EQ as u8, 13, 0, 0, 0, // Jump to 13
+      OpCode::Hlt.into(),
+    ];
+
     // Check the output is accurate when binary contains a function
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
-        // This is the function
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        // This is main
-        OpCode::Load.into(), LOOP as u8, 0, 0, 0, 0,
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
-        OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 0, 65,
-        OpCode::Jz.into(), EQ as u8, 13, 0, 0, 0, // Jump to 13
-        OpCode::Hlt.into(),
-      ]
-    );
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1265,21 +1205,19 @@ use spdr_vm::vm::VM;
     }
 
     // Check the program is correct
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 19, 0, 0, 0, // `main`'s address is 19
-        // Beginning of `lib`
-        OpCode::AddRR.into(), 14, 14, 15,
-        OpCode::Noop.into(),
-        OpCode::MulRR.into(), 88, 87, 98,
-        OpCode::Ret.into(), 0, 0, 0, 0,
-        // Beginning of `main`
-        OpCode::SubRR.into(), 54, 34, 65,
-        OpCode::DivRR.into(), 65, 58, 30,
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 16, 0, 0, 0, // `main`'s address is 16
+      // Beginning of `lib`
+      OpCode::AddRR.into(), 14, 14, 15,
+      OpCode::Noop.into(),
+      OpCode::MulRR.into(), 88, 87, 98,
+      OpCode::Ret.into(), 0, 
+      // Beginning of `main`
+      OpCode::SubRR.into(), 54, 34, 65,
+      OpCode::DivRR.into(), 65, 58, 30,
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1294,22 +1232,20 @@ use spdr_vm::vm::VM;
     }
 
     // Check the program is correct
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 19, 0, 0, 0, // `main`'s address is 19
-        // Beginning of `lib`
-        OpCode::AddRR.into(), 14, 14, 15,
-        OpCode::Noop.into(),
-        OpCode::MulRR.into(), 88, 87, 98,
-        OpCode::Ret.into(), 0, 0, 0, 0,
-        // Beginning of `main`
-        OpCode::SubRR.into(), 54, 34, 65,
-        OpCode::DivRR.into(), 65, 58, 30,
-        OpCode::Call.into(), 5, 0, 0, 0, // Call 5
-        OpCode::Hlt.into(),
-      ]
-    );
+    let expected = [
+      OpCode::Jmp.into(), 16, 0, 0, 0, // `main`'s address is 16
+      // Beginning of `lib`
+      OpCode::AddRR.into(), 14, 14, 15,
+      OpCode::Noop.into(),
+      OpCode::MulRR.into(), 88, 87, 98,
+      OpCode::Ret.into(), 0,
+      // Beginning of `main`
+      OpCode::SubRR.into(), 54, 34, 65,
+      OpCode::DivRR.into(), 65, 58, 30,
+      OpCode::Call.into(), 5, 0, 0, 0, // Call 5
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
@@ -1324,12 +1260,12 @@ use spdr_vm::vm::VM;
     }
 
     let expected = [
-      OpCode::Jmp.into(), 19, 0, 0, 0, // `main`'s address is 19
+      OpCode::Jmp.into(), 16, 0, 0, 0, // `main`'s address is 16
       // Beginning of `lib`
       OpCode::AddRR.into(), 14, 14, 15,
       OpCode::Noop.into(),
       OpCode::MulRR.into(), 88, 87, 98,
-      OpCode::Ret.into(), 0, 0, 0, 0,
+      OpCode::Ret.into(), 0, 
       // Beginning of `main`
       OpCode::Call.into(), 5, 0, 0, 0, // Call 5
       OpCode::SubRR.into(), 54, 34, 65,
@@ -1354,13 +1290,13 @@ use spdr_vm::vm::VM;
     }
 
     let expected = [
-      OpCode::Jmp.into(), 24, 0, 0, 0, // `main`'s address is 24
+      OpCode::Jmp.into(), 21, 0, 0, 0, // `main`'s address is 21
       // Beginning of `lib`
       OpCode::AddRR.into(), 14, 14, 15,
       OpCode::Call.into(), 5, 0, 0, 0, // Call 5
       OpCode::Noop.into(),
       OpCode::MulRR.into(), 88, 87, 98,
-      OpCode::Ret.into(), 0, 0, 0, 0,
+      OpCode::Ret.into(), 0,
       // Beginning of `main`
       OpCode::Call.into(), 5, 0, 0, 0, // Call 5
       OpCode::DivRR.into(), 65, 58, 30,
@@ -1391,16 +1327,16 @@ use spdr_vm::vm::VM;
     let bar_fn_idx = &intern("bar");
     assert_eq!(bar_fn_idx, &1);
     match c.table.get(bar_fn_idx){
-      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [14, 0, 0, 0]),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
       _ => panic!("Should be a function pointer"),
     }
 
     let expected = [
-      OpCode::Jmp.into(), 23, 0, 0, 0, // `main` starts at 23
+      OpCode::Jmp.into(), 17, 0, 0, 0, // `main` starts at 17
       OpCode::AddRR.into(), 14, 60, 37, // `foo` starts at 5
-      OpCode::Ret.into(), 0, 0, 64, 64,
-      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 14
-      OpCode::Ret.into(), 0, 0, 0, 64,
+      OpCode::Ret.into(), 3,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 11
+      OpCode::Ret.into(), 2,
       OpCode::Hlt.into(),
     ];
     assert_eq!(p.as_slice(), expected);
@@ -1425,20 +1361,20 @@ use spdr_vm::vm::VM;
     let bar_fn_idx = &intern("bar");
     assert_eq!(bar_fn_idx, &1);
     match c.table.get(bar_fn_idx){
-      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [14, 0, 0, 0]),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
       _ => panic!("Should be a function pointer"),
     }
 
     let expected = [
-      OpCode::Jmp.into(),  23, 0, 0, 0, // `main` starts at 23
+      OpCode::Jmp.into(), 17, 0, 0, 0, // `main` starts at 17
       OpCode::AddRR.into(),  14, 60, 37, // `foo` starts at 5
-      OpCode::Ret.into(), 0, 0, 64, 64,
-      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 14
-      OpCode::Ret.into(), 0, 0, 0, 64,
+      OpCode::Ret.into(), 3,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 11
+      OpCode::Ret.into(), 2,
       // Call foo
       OpCode::Call.into(), 5, 0, 0, 0,
       // Call bar
-      OpCode::Call.into(), 14, 0, 0, 0,
+      OpCode::Call.into(), 11, 0, 0, 0,
       OpCode::Hlt.into(),
     ];
 
@@ -1463,25 +1399,25 @@ use spdr_vm::vm::VM;
     let bar_fn_idx = &intern("bar");
     assert_eq!(bar_fn_idx, &0);
     match c.table.get(bar_fn_idx){
-      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [14, 0, 0, 0]),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
       _ => panic!("Should be a function pointer"),
     }
 
     // Check the binary is correct
     let expected = [
-      OpCode::Jmp.into(), 23, 0, 0, 0, // `main` starts at 23
+      OpCode::Jmp.into(), 17, 0, 0, 0, // `main` starts at 17
       OpCode::AddRR.into(), 14, 60, 37, // `foo` starts at 5
-      OpCode::Ret.into(), 0, 0, 64, 64,
-      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 14
-      OpCode::Ret.into(), 0, 0, 0, 64,
+      OpCode::Ret.into(), 3,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 11
+      OpCode::Ret.into(), 2,
       // Call bar
-      OpCode::Call.into(), 14, 0, 0, 0,
+      OpCode::Call.into(), 11, 0, 0, 0,
       // Call foo
       OpCode::Call.into(), 5, 0, 0, 0,
       // Call foo
       OpCode::Call.into(), 5, 0, 0, 0,
       // Call bar
-      OpCode::Call.into(), 14, 0, 0, 0,
+      OpCode::Call.into(), 11, 0, 0, 0,
       OpCode::Hlt.into(),
     ];
     assert_eq!(p.as_slice(), expected);
@@ -1505,10 +1441,10 @@ use spdr_vm::vm::VM;
 
   #[test]
   #[rustfmt::skip]
-  fn compile_syscall() {
+  fn compile_syscall() {   
     let mut compiler = Compiler::new("syscall foo", io::stdout());
     compiler
-      .read_header("C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test_header.hd",);
+      .read_header("../spdr-assembler/src/test/test_header.hd",);
 
     let p = compiler.compile();
 
@@ -1746,10 +1682,10 @@ use spdr_vm::vm::VM;
     let p = Compiler::new(src, io::stdout()).compile();
 
     let expected = [
-      OpCode::Jmp.into(), 17, 0, 0, 0, // Jump to 17
+      OpCode::Jmp.into(), 14, 0, 0, 0, // Jump to 14
       // Fn
       OpCode::RvSubRI.into(), 13, 90, 0, 0, 112, 65,
-      OpCode::Ret.into(), 0, 0, 64, 64,
+      OpCode::Ret.into(), 3,
       // Basic instructions
       OpCode::Load.into(), 14, 0, 0, 128, 63,
       OpCode::Copy.into(), 14, 16,
@@ -1770,14 +1706,14 @@ use spdr_vm::vm::VM;
       OpCode::Noop.into(),
       OpCode::Noop.into(),
       OpCode::Noop.into(),
-      OpCode::Jmp.into(), 84, 0, 0, 0, // Jump to 84
+      OpCode::Jmp.into(), 81, 0, 0, 0, // Jump to 81
       // While loop
-      OpCode::Jmp.into(), 118, 0, 0, 0, // Jump to 118
+      OpCode::Jmp.into(), 115, 0, 0, 0, // Jump to 115
       OpCode::AddRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::AddRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::AddRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::CmpRR.into(), CmpFlag::Leq.into(), 14, 16,
-      OpCode::Jnz.into(), EQ as u8, 97, 0, 0, 0, // Jump to 97
+      OpCode::Jnz.into(), EQ as u8, 94, 0, 0, 0, // Jump to 94
       // For Loop
       OpCode::Load.into(), LOOP as u8, 0, 0, 0, 0,
       OpCode::SubRI.into(), 14, 13, 0, 0, 128, 63,
@@ -1785,7 +1721,7 @@ use spdr_vm::vm::VM;
       OpCode::SubRI.into(), 14, 13, 0, 0, 128, 63,
       OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
       OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 16, 65,
-      OpCode::Jz.into(), EQ as u8, 134, 0, 0, 0, // Jump to 134
+      OpCode::Jz.into(), EQ as u8, 131, 0, 0, 0, // Jump to 131
       // Memory manipulation
       OpCode::Push.into(), 15,
       OpCode::Pop.into(),
@@ -1797,11 +1733,11 @@ use spdr_vm::vm::VM;
       OpCode::Dealloc.into(),
       // If
       OpCode::CmpRI.into(), CmpFlag::Gt.into(), 15, 0, 0, 96, 65,
-      OpCode::Jz.into(), EQ as u8, 215, 0, 0, 0, // Jump to 215
+      OpCode::Jz.into(), EQ as u8, 212, 0, 0, 0, // Jump to 215
       OpCode::Call.into(), 5, 0, 0, 0, // Jump to 5
       // Else If
       OpCode::CmpRI.into(), CmpFlag::Lt.into(), 15, 0, 0, 96, 65,
-      OpCode::Jz.into(), EQ as u8, 231, 0, 0, 0, // Jump to 231
+      OpCode::Jz.into(), EQ as u8, 228, 0, 0, 0, // Jump to 228
       OpCode::Noop.into(),
       OpCode::Noop.into(),
       OpCode::Noop.into(),
@@ -1822,7 +1758,7 @@ use spdr_vm::vm::VM;
     vm.upload(program);
     vm.run();
 
-    assert_eq!(vm.dbg_reg(15).as_f32(), 9.0);
+    assert_eq!(vm.reg()[15].as_f32(), 9.0);
 
     // Testing a function called
     let src = include_str!("../src/test/basic_script_function.spdr");
@@ -1830,8 +1766,7 @@ use spdr_vm::vm::VM;
     let program = Compiler::new(src, &mut w).compile();
 
     let mut vm = VM::new();
-    vm.upload(program);
-    vm.dbg_run(&mut w);
+    vm.upload(program.clone());
 
     // Foo is the equivalent of this function so test against each other 
     fn foo(a:f32, b:f32) -> f32 {
@@ -1840,11 +1775,34 @@ use spdr_vm::vm::VM;
       c
     }
 
-    // TODO: Some error with skipping the final copy.
-    // Need to check VM to see the value of the return address
-    // Number in $4 is correct so the function executes properly
+    // Confirm function compiled properly
+    let expected = [
+      OpCode::Jmp.into(), 21, 0, 0, 0, // Main begins on 21
+      OpCode::MulRR.into(), 6, 4, 5,  
+      OpCode::AddRI.into(), 6, 6, 16, 88, 244, 65, // [16, 88, 244, 65,] = 30.543
+      OpCode::Copy.into(), 4, 6,
+      OpCode::Ret.into(), 0, 
+      OpCode::Load.into(), 4, 205, 204, 172, 64, 
+      OpCode::Load.into(), 5, 80, 141, 83, 65, 
+      OpCode::Call.into(), 5, 0, 0, 0, 
+      OpCode::Copy.into(), 15, 4,
+      OpCode::Hlt.into(),
+    ];
 
-    assert_eq!(vm.dbg_reg(15).as_f32(), foo(5.4, 13.222));
+    // return in vm expects a u8 not a u32
+    // causing error
+    // fix
+    assert_eq!(program.as_slice(), expected);
+
+    // TODO: Add methods to read the fields of the VM
+    // Need to check VM to see the value of the return address
+
+    // Opcode needs to show the whole instructions
+    // DBG commands need docs
+  
+    vm.run();
+    
+    assert_eq!(vm.reg()[4].as_f32(), foo(5.4, 13.222));
 
     // Test an external function call
   }
@@ -1862,7 +1820,7 @@ use spdr_vm::vm::VM;
     let foo_fn_idx = &intern("foo");
     assert_eq!(foo_fn_idx, &1);
     match c.table.get(foo_fn_idx){
-      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [0, 0, 160, 64]),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0,]),
       _ => panic!("Should be a function pointer"),
     }
 
@@ -1870,26 +1828,26 @@ use spdr_vm::vm::VM;
     let bar_fn_idx = &intern("bar");
     assert_eq!(bar_fn_idx, &0);
     match c.table.get(bar_fn_idx){
-      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [0, 0, 112, 65]),
+      Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [12, 0, 0, 0,]),
       _ => panic!("Should be a function pointer"),
     }
 
     // Check the binary is correct
     let expected = [
-      OpCode::Jmp.into(),  0, 0, 192, 65, // `main` starts at 24
+      OpCode::Jmp.into(),  18, 0, 0, 0, // `main` starts at 24
       // Call bar
-      OpCode::Call.into(), 0, 0, 112, 65, // `foo` starts at 5
-      OpCode::Ret.into(), 0, 0, 64, 64,
-      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 15
-      OpCode::Ret.into(), 0, 0, 0, 64,
+      OpCode::Call.into(), 12, 0, 0, 0, // `foo` starts at 5
+      OpCode::Ret.into(), 3,
+      OpCode::PowRR.into(), 67, 64, 75, // `bar` starts at 12
+      OpCode::Ret.into(), 2,
       // Call bar
-      OpCode::Call.into(), 0, 0, 112, 65,
+      OpCode::Call.into(), 12, 0, 0, 0,
       // Call foo
-      OpCode::Call.into(), 0, 0, 160, 64,
+      OpCode::Call.into(), 5, 0, 0, 0,
       // Call foo
-      OpCode::Call.into(), 0, 0, 160, 64,
+      OpCode::Call.into(), 5, 0, 0, 0,
       // Call bar
-      OpCode::Call.into(), 0, 0, 112, 65,
+      OpCode::Call.into(), 12, 0, 0, 0,
       OpCode::Hlt.into(),
     ];
     assert_eq!(p.as_slice(), expected);
