@@ -1,6 +1,6 @@
 /target
-.hd
-*.txt
+*.hd
+*.spex
 .vscode
 Todo.md
-update-spdr-deps.bash
+Patch Notes.md

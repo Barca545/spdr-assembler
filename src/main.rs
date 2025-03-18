@@ -4,6 +4,7 @@ mod patch;
 mod error_printing;
 mod interner;
 mod tokenizer;
+mod cli_integration;
 
 use assembler_errors::ASMError;
 use patch::Patch;
@@ -14,7 +15,7 @@ use spdr_isa::{
   registers::{FIRST_FREE_REGISTER, REG_COUNT},
 };
 use std::{
-  collections::HashMap, env, fmt::{Debug, Display}, fs::read_to_string, io::{self, Write}, usize,
+  collections::HashMap, fmt::{Debug, Display}, fs::read_to_string, io::{self, Write}, usize,
 };
 use tokenizer::{Lexer, Span, Token, TokenKind};
 
@@ -22,8 +23,7 @@ use tokenizer::{Lexer, Span, Token, TokenKind};
 // - I think there has to be something I can do when parsing a line instead of
 //   unwrapping next. It would be better to handle the `Option`. Probably as
 //   simple as returning an error if the unwrap fails that says expected X/Y/Z
-//   tokens
-//   should recieve its own symbol table to prevent this
+//   tokens should recieve its own symbol table to prevent this
 // - Eventually I should sub out usizes and choose some number that is platform
 //   independent
 // - I think there has to be a better way of storing the src to print than
@@ -43,28 +43,24 @@ use tokenizer::{Lexer, Span, Token, TokenKind};
 // - The beginning and end of blocks need their own lines
 // - All variables are global. Names must be unique
 
-fn main() {
-  let args = env::args().collect::<Vec<String,>>();
-  let path = args[1].trim();
-  let src = read_to_string(path,).unwrap();
+fn main() { 
+  let args = cli_integration::parse_arguments().unwrap();
+
+  let src = read_to_string(args.path).unwrap();
+
   let mut compiler = Compiler::new(&src,io::stdout());
-  if let Some(header,) = args.get(3,) {
-    compiler.read_header(header.trim(),);
+
+  if let Some(header,) = args.header {
+    // TODO: This should be able to take a PathBuf
+    compiler.read_header(header.to_str().unwrap(),);
   }
 
   let program = compiler.compile();
 
-  // If an output is specifed place the file there. Otherwise place it in the
-  // current directory
-  if let Some(output,) = args.get(2,) {
-    program.save(output.trim(),).unwrap();
-  }
-  else {
-    // Get the name of the file
-    // Update it to have the exe ending
-    let output = &format!("{}.spex", src.split(['\\', '.',],).rev().nth(1,).unwrap());
-    program.save(output,).unwrap();
-  }
+  let output_file = &format!("{}/{}.spex",args.output.to_str().unwrap(),args.name);
+
+  // TODO: Program should be able to take a PathBuf
+  program.save(output_file,).unwrap();
 }
 
 #[derive(Debug, Clone, Copy,)]
@@ -746,7 +742,7 @@ impl<'tcx,> Compiler<'tcx,> {
 
 #[cfg(test)]
 mod test {
-  use std::io;
+  use std::{any::Any, io};
   use crate::{interner::intern, Compiler, Ty, VarDecl};
   use spdr_isa::{
     opcodes::{CmpFlag, OpCode},
@@ -757,7 +753,6 @@ mod test {
 
   #[test]
   fn load_header() {
-    //TODO: Figure out why this does not import partial header paths
     let mut compiler = Compiler::new("",io::stdout());
     compiler.read_header("../spdr-assembler/src/test/test_header.hd",);
 
@@ -786,6 +781,9 @@ mod test {
   fn compile_load_cpy() {
     let p = Compiler::new("Load $14 1 Copy $15 $12",io::stdout()).compile();
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
       OpCode::Load.into(), 14, 0, 0, 128, 63,
@@ -799,6 +797,9 @@ mod test {
   #[rustfmt::skip]
   fn compile_memcpy_rmem_wmem() {
     let p = Compiler::new("wmem $14 $15 1 $16 memcpy $55 $50 rmem $255 $40 1 $20",io::stdout()).compile();
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
 
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
@@ -815,6 +816,9 @@ mod test {
   fn compile_alloc_dealloc() {
     let p = Compiler::new("Alloc $14 $90 Dealloc", io::stdout()).compile();
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 4
       OpCode::Alloc.into(), 14,   90,
@@ -828,6 +832,10 @@ mod test {
   fn compile_arith() {
     // ADDII
     let p = Compiler::new("ADD $14 15 10", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::Load.into(), 14, 0, 0, 200, 65, 
@@ -837,6 +845,10 @@ mod test {
 
     // ADDRI
     let p = Compiler::new("ADD $14 $15 10", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::AddRI.into(), 14, 15, 0, 0, 32, 65, 
@@ -846,6 +858,10 @@ mod test {
 
     // ADDRR
     let p = Compiler::new("ADD $14 $14 $15", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::AddRR.into(), 14, 14, 15, 
@@ -855,6 +871,10 @@ mod test {
 
     // SUBII
     let p = Compiler::new("SUB $14 10 30", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::Load.into(), 14, 0, 0, 160, 193, 
@@ -864,6 +884,10 @@ mod test {
 
     // SUBIR
     let p = Compiler::new("SUB $15 90 $14", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::RvSubRI.into(), 15, 14, 0, 0, 180, 66, 
@@ -873,6 +897,10 @@ mod test {
 
     // SUBRI
     let p = Compiler::new("SUB $15 $14 90", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::SubRI.into(), 15, 14, 0, 0, 180, 66, 
@@ -882,6 +910,10 @@ mod test {
 
     // SUBRR
     let p = Compiler::new("SUB $15 $14 $14", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::SubRR.into(), 15, 14, 14, 
@@ -891,6 +923,10 @@ mod test {
 
     // MULII
     let p = Compiler::new("MUL $14 10 29.32", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::Load.into(), 14, 154, 153, 146, 67, 
@@ -900,6 +936,10 @@ mod test {
 
     // MULRI
     let p = Compiler::new("MUL $15 $14 10", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::MulRI.into(), 15, 14, 0, 0, 32, 65, 
@@ -909,6 +949,10 @@ mod test {
 
     // MULRR
     let p = Compiler::new("MUL $15 $14 $14", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::MulRR.into(), 15, 14, 14, 
@@ -918,6 +962,10 @@ mod test {
 
     // DIVII
     let p = Compiler::new("DIV $14 32.54 653", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::Load.into(), 14, 42, 28, 76, 61, 
@@ -927,6 +975,10 @@ mod test {
 
     // DIVRI
     let p = Compiler::new("DIV $15 $14 90", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::DivRI.into(), 15, 14, 0, 0, 180, 66, 
@@ -936,6 +988,10 @@ mod test {
 
     // DIVIR
     let p = Compiler::new("DIV $15 90 $14", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::RvDivRI.into(), 15, 14, 0, 0, 180, 66, 
@@ -945,6 +1001,10 @@ mod test {
 
     // DIVRR
     let p = Compiler::new("DIV $15 $14 $14", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::DivRR.into(), 15, 14, 14, 
@@ -954,6 +1014,10 @@ mod test {
 
     // POWII
     let p = Compiler::new("POW $14 76.253216 3.7", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::Load.into(), 14, 127, 144, 12, 75, 
@@ -963,6 +1027,10 @@ mod test {
 
     // POWRI
     let p = Compiler::new("POW $15 $14 90", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::PowRI.into(), 15, 14, 0, 0, 180, 66, 
@@ -972,6 +1040,10 @@ mod test {
 
     // POWIR
     let p = Compiler::new("POW $15 90 $14",io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+    
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::RvPowRI.into(), 15, 14, 0, 0, 180, 66, 
@@ -981,6 +1053,10 @@ mod test {
 
     // PowRR
     let p = Compiler::new("POW $15 $14 $14", io::stdout()).compile();
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::PowRR.into(), 15, 14, 14, 
@@ -996,6 +1072,9 @@ mod test {
     let mut c = Compiler::new("Loop {ADD $14 $30 1}", io::stdout());
     let p = c.compile();
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     // Check the output is accurate
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
@@ -1008,6 +1087,9 @@ mod test {
     // Test plain loop compilation with function at beginning
     let mut c = Compiler::new("Loop {ADD $14 $30 1} FN foo {SUB $16 $94 $233 RET 1}", io::stdout());
     let p = c.compile();
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
 
     // Check the output is accurate
     let expected = [
@@ -1028,6 +1110,9 @@ mod test {
     let mut c = Compiler::new("while true {noop noop noop}",io::stdout());
     let p = c.compile();
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     // Check the output is accurate
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
@@ -1041,6 +1126,10 @@ mod test {
 
     // Test While loop compilation when `false`
     let p = Compiler::new("while false {noop noop noop}", io::stdout()).compile();
+   
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
       OpCode::Hlt.into(),
@@ -1050,6 +1139,9 @@ mod test {
     // Test While loop compilation with real condition
     let mut c = Compiler::new("while EQ $15 1 {noop noop noop}", io::stdout());
     let p = c.compile();
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
 
     let expected = [
       OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
@@ -1066,6 +1158,9 @@ mod test {
     // Test While loop compiles when binary contains function
     let mut c = Compiler::new("WHILE EQ $15 1 {ADD $15 $15 $54 } FN foo {NOOP NOOP}", io::stdout());
     let p = c.compile();
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
     
     let expected = [
       OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
@@ -1089,24 +1184,29 @@ mod test {
     let mut c = Compiler::new("for i in 0..9 {noop noop noop}", io::stdout());
     let p = c.compile();   
 
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Load.into(), LOOP as u8, 0, 0, 0, 0,
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
-        OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 0, 65,
-        OpCode::Jz.into(), EQ as u8, 11, 0, 0, 0, // Jump to 11
-        OpCode::Hlt.into(),
-      ]
-    );
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Load.into(), LOOP as u8, 0, 0, 0, 0,
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::AddRI.into(), LOOP as u8, LOOP as u8, 0, 0, 128, 63,
+      OpCode::CmpRI.into(), CmpFlag::Eq.into(), LOOP as u8, 0, 0, 0, 65,
+      OpCode::Jz.into(), EQ as u8, 11, 0, 0, 0, // Jump to 11
+      OpCode::Hlt.into(),
+    ];
+
+    assert_eq!(p.as_slice(), expected);
 
     // Test for loop compiles when binary has function
     let mut c = Compiler::new("FOR i IN 0..9 {NOOP NOOP NOOP} FN foo {NOOP NOOP}", io::stdout());
-    let p = c.compile();  
+    let p = c.compile(); 
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p); 
 
     let expected = [
       OpCode::Jmp.into(), 7, 0, 0, 0, // `main` starts on 7
@@ -1134,32 +1234,39 @@ mod test {
     // Compile IF with boolean true check
     // Compile ELSE
     let p = Compiler::new("IF true {Noop Noop Noop Noop} else {Add $15 0 1} Mul $16 1 1", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Noop.into(),
-        OpCode::Load.into(), 16, 0, 0, 128, 63, 
-        OpCode::Hlt.into(),
-      ]
-    );
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Noop.into(),
+      OpCode::Load.into(), 16, 0, 0, 128, 63, 
+      OpCode::Hlt.into(),
+    ];
+    
+    assert_eq!(p.as_slice(), expected);
 
     // Compile IF with boolean false check
     let p = Compiler::new("IF false {mul $54 0 1 } else {add $26 $17 1} add $46 0 1", io::stdout()).compile();
-    assert_eq!(
-      p.as_slice(),
-      [
-        OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-        // Else Block
-        OpCode::AddRI.into(), 26, 17, 0, 0, 128, 63,
-        // Trailing expression
-        OpCode::Load.into(), 46, 0, 0, 128, 63,
-        OpCode::Hlt.into(),
-      ]
-    );
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      // Else Block
+      OpCode::AddRI.into(), 26, 17, 0, 0, 128, 63,
+      // Trailing expression
+      OpCode::Load.into(), 46, 0, 0, 128, 63,
+      OpCode::Hlt.into(),
+    ];
+
+    assert_eq!(p.as_slice(), expected);
+
 
     // Compile IF with runtime check
     // Compile ELSE IF
@@ -1217,6 +1324,10 @@ mod test {
       OpCode::DivRR.into(), 65, 58, 30,
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1245,6 +1356,10 @@ mod test {
       OpCode::Call.into(), 5, 0, 0, 0, // Call 5
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1275,6 +1390,9 @@ mod test {
       OpCode::Hlt.into(),
     ];
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1303,6 +1421,9 @@ mod test {
       OpCode::Call.into(), 5, 0, 0, 0, // Call 5
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
     
     assert_eq!(p.as_slice(), expected);
 
@@ -1339,6 +1460,10 @@ mod test {
       OpCode::Ret.into(), 2,
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1377,6 +1502,9 @@ mod test {
       OpCode::Call.into(), 11, 0, 0, 0,
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
 
     assert_eq!(p.as_slice(), expected);
   }
@@ -1420,6 +1548,10 @@ mod test {
       OpCode::Call.into(), 11, 0, 0, 0,
       OpCode::Hlt.into(),
     ];
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
   
@@ -1453,6 +1585,10 @@ mod test {
       OpCode::SysCall.into(), 0,
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1469,6 +1605,10 @@ mod test {
       OpCode::PopR.into(), 16,
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1483,6 +1623,10 @@ mod test {
       OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
       OpCode::Hlt.into()
     ]; 
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
 
     // EQIR
@@ -1493,7 +1637,12 @@ mod test {
       OpCode::CmpRI.into(), CmpFlag::Eq.into(), 14, 0, 0, 128, 63, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
+
     // EQRR
     let p = Compiler::new("eq $14 $15", io::stdout()).compile();
     let expected = [
@@ -1501,6 +1650,10 @@ mod test {
       OpCode::CmpRR.into(), CmpFlag::Eq.into(), 14, 15, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1514,6 +1667,10 @@ mod test {
       OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
 
     // GEQRI
@@ -1523,6 +1680,10 @@ mod test {
       OpCode::CmpRI.into(), CmpFlag::Geq.into(), 14, 0, 0, 128, 63, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
 
     // GEQIR
@@ -1533,6 +1694,10 @@ mod test {
       OpCode::Not.into(), EQ as u8, EQ as u8,
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
 
     // GEQRR
@@ -1542,6 +1707,10 @@ mod test {
       OpCode::CmpRR.into(), CmpFlag::Geq.into(), 15, 14, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1554,6 +1723,10 @@ mod test {
       OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
       OpCode::Load.into(), EQ as u8, 0, 0, 0, 0, OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
 
     // LEQRI
@@ -1563,6 +1736,10 @@ mod test {
       OpCode::CmpRI.into(), CmpFlag::Leq.into(), 14, 0, 0, 128, 63, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
 
     // LEQIR
@@ -1582,6 +1759,10 @@ mod test {
       OpCode::CmpRR.into(), CmpFlag::Leq.into(), 15, 14, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
   
@@ -1595,7 +1776,11 @@ mod test {
       OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
       OpCode::Hlt.into()
     ];
+    
     assert_eq!(p.as_slice(), expected);
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
 
     // GTRI
     let p = Compiler::new("gt $14 1", io::stdout()).compile();
@@ -1606,6 +1791,9 @@ mod test {
     ];
     assert_eq!(p.as_slice(), expected);
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     // GTIR
     let p = Compiler::new("gt 1 $14", io::stdout()).compile();
     let expected = [
@@ -1614,6 +1802,10 @@ mod test {
       OpCode::Not.into(), EQ as u8, EQ as u8,
       OpCode::Hlt.into(),
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
 
     // GTRR
@@ -1623,6 +1815,10 @@ mod test {
       OpCode::CmpRR.into(), CmpFlag::Gt.into(), 15, 14, 
       OpCode::Hlt.into()
     ];
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
@@ -1640,6 +1836,9 @@ mod test {
       ]
     );
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     // LTRI
     let p = Compiler::new("LT $14 1", io::stdout()).compile();
     assert_eq!(
@@ -1650,6 +1849,9 @@ mod test {
         OpCode::Hlt.into()
       ]
     );
+
+      // Check printing the disassembled program does not cause the program to crash
+      dbg!(&p);    
 
     // LTIR
     let p = Compiler::new("LT 1 $14 ", io::stdout()).compile();
@@ -1663,6 +1865,9 @@ mod test {
       ]
     );
 
+      // Check printing the disassembled program does not cause the program to crash
+      dbg!(&p);    
+
     // LTRR
     let p = Compiler::new("LT $15 $14", io::stdout()).compile();
     assert_eq!(
@@ -1673,6 +1878,9 @@ mod test {
         OpCode::Hlt.into()
       ]
     );
+
+      // Check printing the disassembled program does not cause the program to crash
+      dbg!(&p);    
   }
 
   #[test]
@@ -1744,36 +1952,52 @@ mod test {
       OpCode::Hlt.into(),
     ];
 
+      // Check printing the disassembled program does not cause the program to crash
+      dbg!(&p);
+
     assert_eq!(p.as_slice(), expected);
   }
 
   #[test]
-  fn execute_simple_scripts() {
+  fn test_script_with_while_loop_compiles() {
     //Testing a while loop
-    let src = include_str!("../src/test/basic_script_while_loop.spdr");
+    let src = include_str!("../src/test/test_script_while_loop.spdr");
     let mut w = io::stdout();
     let program = Compiler::new(src, &mut w).compile();
+
+    let loop_var = 9.0f32.to_le_bytes();
+
+    let expected = [
+      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+      OpCode::Load.into(), 15, 0, 0, 128, 63,
+      OpCode::Jmp.into(), 30, 0, 0, 0, 
+      OpCode::AddRI.into(), 94, 94, 0, 0, 128, 63,
+      OpCode::AddRI.into(), 15, 15, 0, 0, 128, 63, 
+      OpCode::CmpRI.into(), CmpFlag::Lt.into(), 15, loop_var[0], loop_var[1], loop_var[2], loop_var[3],
+      OpCode::Jnz.into(), EQ as u8, 16, 0, 0, 0, // Jump to 16
+      OpCode::Hlt.into(),
+    ];
+    assert_eq!(program.as_slice(), expected);
+    
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&program);
 
     let mut vm = VM::new();
     vm.upload(program);
     vm.run();
 
     assert_eq!(vm.reg()[15].as_f32(), 9.0);
+  }
 
+  #[test]
+  fn test_script_compiles_with_function_calls(){
     // Testing a function called
-    let src = include_str!("../src/test/basic_script_function.spdr");
+    let src = include_str!("../src/test/test_script_function.spdr");
     let mut w = io::stdout();
     let program = Compiler::new(src, &mut w).compile();
 
-    let mut vm = VM::new();
-    vm.upload(program.clone());
-
-    // Foo is the equivalent of this function so test against each other 
-    fn foo(a:f32, b:f32) -> f32 {
-      let mut c = a * b;
-      c += 30.543;
-      c
-    }
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&program);
 
     // Confirm function compiled properly
     let expected = [
@@ -1789,23 +2013,95 @@ mod test {
       OpCode::Hlt.into(),
     ];
 
-    // return in vm expects a u8 not a u32
-    // causing error
-    // fix
     assert_eq!(program.as_slice(), expected);
 
-    // TODO: Add methods to read the fields of the VM
-    // Need to check VM to see the value of the return address
+    // Foo is the equivalent of this function so test against each other 
+    fn foo(a:f32, b:f32) -> f32 {
+      let mut c = a * b;
+      c += 30.543;
+      c
+    }
 
-    // Opcode needs to show the whole instructions
-    // DBG commands need docs
-  
+    let mut vm = VM::new();
+    vm.upload(program);
     vm.run();
-    
+  
     assert_eq!(vm.reg()[4].as_f32(), foo(5.4, 13.222));
-
-    // Test an external function call
   }
+
+  #[test]
+  fn test_script_compiles_with_external_function(){
+    // Test an external function call
+    let src = include_str!("../src/test/test_external_script_function.spdr");
+    let hed = "";
+    let mut compiler = Compiler::new(src, io::stdout());
+    // Upload the header file to the compiler
+    compiler.read_header(hed);
+    let program = compiler.compile();
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&program);
+
+    let expected = [];
+    
+    assert_eq!(program.as_slice(), expected);
+
+    let mut vm = VM::new();
+    fn foo(vm:&mut VM, _:&mut dyn Any){
+      let a = vm.extern_read(vm.sp().as_u32() as usize).unwrap().as_f32();
+      // Add one to read the next lowest entry in the stack because the stack grows downwards
+      let b =  vm.extern_read(vm.sp().as_u32() as usize + 1).unwrap().as_f32();
+
+      let c = a * b + 30.543;
+      
+      // Push c into the VM
+      vm.extern_push(c);
+    }
+
+    vm.register_extern(foo);
+
+
+    vm.upload(program);
+  }
+
+  #[test]
+  fn load_and_run_assembled_script(){
+    let program = Program::load("../spdr-assembler/src/test/basic_script_function.spex").unwrap();
+    let mut vm = VM::new();
+
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&program);
+
+    // Confirm function compiled properly
+    let expected = [
+      OpCode::Jmp.into(), 21, 0, 0, 0, // Main begins on 21
+      OpCode::MulRR.into(), 6, 4, 5,  
+      OpCode::AddRI.into(), 6, 6, 16, 88, 244, 65, // 30.543.to_le_bytes() = [16, 88, 244, 65,]
+      OpCode::Copy.into(), 4, 6,
+      OpCode::Ret.into(), 0, 
+      OpCode::Load.into(), 4, 205, 204, 172, 64, 
+      OpCode::Load.into(), 5, 80, 141, 83, 65, 
+      OpCode::Call.into(), 5, 0, 0, 0, 
+      OpCode::Copy.into(), 15, 4,
+      OpCode::Hlt.into(),
+    ];
+
+    assert_eq!(program.as_slice(),expected);
+    
+    // Run the actual program
+    vm.upload(program);
+    vm.run();
+
+    // Foo is the equivalent of this function so test against each other 
+    fn foo(a:f32, b:f32) -> f32 {
+      let mut c = a * b;
+      c += 30.543;
+      c
+    }
+
+    // Check program output
+    assert_eq!(vm.reg()[4].as_f32(), foo(5.4, 13.222));
+  } 
 
   // This always has to be at the end. 
   // Because it has foo and bar in different orders and one run of the program shares the same interner
@@ -1832,6 +2128,9 @@ mod test {
       _ => panic!("Should be a function pointer"),
     }
 
+    // Check printing the disassembled program does not cause the program to crash
+    dbg!(&p);
+
     // Check the binary is correct
     let expected = [
       OpCode::Jmp.into(),  18, 0, 0, 0, // `main` starts at 24
@@ -1852,6 +2151,7 @@ mod test {
     ];
     assert_eq!(p.as_slice(), expected);
   }
+
 
   impl<'tcx,> Compiler<'tcx,> {
     /// Method created to test `self.eat_current_instruction()` works.

@@ -1,0 +1,6 @@
+[package]
+name = "spdr-assembler"
+version = "0.1.0"
+
+[information]
+output = "./src"

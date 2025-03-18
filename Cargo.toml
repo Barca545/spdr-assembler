@@ -8,7 +8,18 @@ edition = "2021"
 [dependencies]
 eyre = "0.6.12"
 thiserror = "2.0.11"
-spdr-isa = {git = "https://github.com/Barca545/spdr-isa.git", rev = "97808963f20a30ec997ce2a96704c67051669da4"}
+pico-args = "0.5.0"
+toml = "0.8.20"
+serde = {version = "1.0.219", features = ["derive"]}
+spdr-isa = {git = "https://github.com/Barca545/spdr-isa.git", rev = "497d155f5242ceec2b522645a96f997aac32c840"}
 
 [dev-dependencies]
-spdr-vm = {git = "https://github.com/Barca545/spdr-vm.git", rev = "bc0b8ef013548bbbf04d5bd1037b4fec413c334d"}
+spdr-vm = {git = "https://github.com/Barca545/spdr-vm.git", rev = "686d6c42f0bf601b95b05670d20c4d5d5d50429e"}
+
+
+
+
+
+
+
+
