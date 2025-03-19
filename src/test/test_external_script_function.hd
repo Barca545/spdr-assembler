@@ -1,0 +1,1 @@
+fn foo(a:num, b:num) -> num;

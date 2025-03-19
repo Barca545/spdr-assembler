@@ -26,7 +26,7 @@ ARGS:
   <INPUT>
 ";
 
-const CONFIG_FILE_PATH:&str = "./src/config.toml";
+pub(crate) const CONFIG_FILE_PATH:&str = "./src/config.toml";
 
 /// Arguments to a run of the Assembler.
 #[derive(Debug,)]
@@ -42,25 +42,26 @@ pub struct AppArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize,)]
-struct Package {
+pub(crate) struct Package {
   /// Name of the assembler. This will not change.
-  name:String,
+  pub(crate) name:String,
   /// The version of the assembler uses [semver](https://semver.org/).
-  version:String,
+  pub(crate) version:String,
 }
 
+// TODO: Needs better name
 /// Configuration information about the current assembler.
 #[derive(Debug, Deserialize, Serialize,)]
-struct Information {
+pub(crate) struct Information {
   /// Default folder to place the compiled binary.
-  output:PathBuf,
+  pub(crate) output:PathBuf,
 }
 
 /// Represents a `config.toml` file.
 #[derive(Debug, Deserialize, Serialize,)]
-struct Config {
-  package:Package,
-  information:Information,
+pub(crate) struct Config {
+  pub(crate) package:Package,
+  pub(crate) information:Information,
 }
 
 /// Build [`AppArgs`] from Arguments the user passed via the CLI.
@@ -132,37 +133,4 @@ pub fn parse_arguments() -> Result<AppArgs,> {
 
 fn parse_path(s:&OsStr,) -> Result<PathBuf,> {
   Ok(s.into(),)
-}
-
-#[cfg(test)]
-mod test {
-  use super::{Config, CONFIG_FILE_PATH};
-  use std::{fs, path::PathBuf};
-
-  #[test]
-  fn update_config_file() {
-    // Get the config file
-    let mut config = toml::from_str::<Config,>(&fs::read_to_string(CONFIG_FILE_PATH,).unwrap(),).unwrap();
-
-    let old_output = config.information.output;
-
-    // Update Config.toml
-    config.information.output =
-      PathBuf::from("C:\\Users\\user\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test",);
-
-    // Save config
-    fs::write(CONFIG_FILE_PATH, toml::to_string(&config,).unwrap(),).unwrap();
-
-    // Reload and assert it changed
-    let mut config = toml::from_str::<Config,>(&fs::read_to_string(CONFIG_FILE_PATH,).unwrap(),).unwrap();
-
-    assert_eq!(
-      config.information.output,
-      PathBuf::from("C:\\Users\\user\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test",)
-    );
-
-    // Reset the file
-    config.information.output = old_output;
-    fs::write(CONFIG_FILE_PATH, toml::to_string(&config,).unwrap(),).unwrap();
-  }
 }

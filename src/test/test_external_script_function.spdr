@@ -1,2 +1,6 @@
 LOAD $14 1
-Load $15 3
+LOAD $15 3
+PUSH $14
+PUSH $15
+SYSCALL foo
+POPR $16
