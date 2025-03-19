@@ -15,11 +15,6 @@ pub enum ASMError<'e,> {
     "\x1b[93mINVALID IMMEDIATE TYPE:\x1b[0m Immediate value must be a boolean or a number not {} {}.", token.kind, token.span.start
   )]
   InvalidImmediateType { token:Token, },
-  #[error(
-    "\x1b[93mMISSING EQUALS IN VAR DECLARATION:\x1b[0m A variable declaration must be followed by \"=\" not {0}"
-  )]
-  NoEquals(TokenKind,),
-  // Can these be aggregated?
   #[error("\x1b[93mMISSING KEYWORD:\x1b[0m The identifier in a {0} loop must be followed by {1} not {2}")]
   MissingKwd(TokenKind, TokenKind, TokenKind,),
   #[error("\x1b[93mMISSING LOOP VARIABLE:\x1b[0m For loops must have a loop variable. The loop defined here {} is followed by {}.", span.start, token)]
@@ -49,6 +44,10 @@ pub enum ASMError<'e,> {
     "\x1b[93mUNREGISTERED EXTERNAL CALL:\x1b[0m The name {name} {} is not associated with a registered external function call.", span.start
   )]
   UnregistedSyscall { name:&'e str, span:Span, },
+  #[error("\x1b[93mINVALID MATH ARGUMENTS:\x1b[0m {} {} must be followed by identifiers or numbers {} {} do not fit the pattern.", operation.kind, operation.span.start, arg1.kind, arg2.kind)]
+  InvalidMathArgs {
+    operation:Token, arg1:Token, arg2:Token,
+  },
 }
 
 impl<'e,> ASMError<'e,> {
@@ -59,7 +58,6 @@ impl<'e,> ASMError<'e,> {
       ASMError::UndeclaredIdentifier { span, .. } => *span,
       ASMError::InvalidComparison { token, } => token.span,
       ASMError::InvalidImmediateType { token, .. } => token.span,
-      ASMError::NoEquals(..,) => todo!(),
       ASMError::MissingKwd(..,) => todo!(),
       ASMError::MissingLoopVar { span, .. } => *span,
       ASMError::MissingFnName { token, .. } => token.span,
@@ -71,6 +69,7 @@ impl<'e,> ASMError<'e,> {
       ASMError::UnavailableFunctionName(_,) => todo!(),
       ASMError::UnregistedSyscall { span, .. } => *span,
       ASMError::UndefinedFunction { span, .. } => *span,
+      ASMError::InvalidMathArgs { operation, .. } => operation.span,
     }
   }
 }

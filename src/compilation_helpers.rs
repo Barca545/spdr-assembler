@@ -4,8 +4,13 @@ use spdr_isa::opcodes::{CmpFlag, OpCode};
 use spdr_isa::program::Program;
 use spdr_isa::registers::{EQ, LOOP};
 
-// Refactor:
-// - Can the math statements be merged into one helper function?
+/// Possible argument combinations for a binary operation.
+pub enum ArgTypes{
+  II(f32, f32),
+  RI(u8, [u8;4], ),
+  IR(u8, [u8;4], ),
+  RR(u8, u8),
+}
 
 /// Helper functions for compilation
 impl<'tcx,> Compiler<'tcx,> {
@@ -247,335 +252,80 @@ impl<'tcx,> Compiler<'tcx,> {
     }
   }
 
-  pub(super) fn compile_add_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
-    let target = match target.kind {
-      TokenKind::Register(reg,) => reg,
-      TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
+  #[rustfmt::skip]
+  pub (super) fn compile_arithmetic_expr(&mut self,){
+    let op = self.current_instruction;
+    // Get the destination
+    let dst = match self.next_token().unwrap() {
+      Token{kind:TokenKind::Register(reg,), ..} => reg,
+      Token{kind:TokenKind::Identifier(name,), span} => self.ident_to_reg(name, span,),
+      other => unreachable!("{}", ASMError::NotRegisterOrIdent{token:other},),
+    };
+    let arg1 =  self.next_token().unwrap();
+    let arg2 =  self.next_token().unwrap();
+
+    // Match the arguments to get the type of instruction to use
+    let arg_type = match (arg1.kind, arg2.kind,) {
+      (TokenKind::Num(a,), TokenKind::Num(b,),) => ArgTypes::II(a, b),
+      (TokenKind::Num(a,), TokenKind::Register(b,),) => ArgTypes::IR(b, a.to_le_bytes()),
+      (TokenKind::Num(a,), TokenKind::Identifier(b,),) => ArgTypes::IR(self.ident_to_reg(b, arg2.span,), a.to_le_bytes(),), 
+      (TokenKind::Register(a,), TokenKind::Num(b,),) => ArgTypes::RI(a, b.to_le_bytes()),
+      (TokenKind::Identifier(a,), TokenKind::Num(b,),) => ArgTypes::RI(self.ident_to_reg(a, arg1.span,), b.to_le_bytes()),
+      (TokenKind::Register(a,), TokenKind::Register(b,),) => ArgTypes::RR(a, b),
+      (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => ArgTypes::RR(self.ident_to_reg(a, arg1.span,), self.ident_to_reg(b, arg2.span,)),
+      _ => panic!("{}", ASMError::InvalidMathArgs { operation: op, arg1, arg2})
     };
 
-    match (token_a.kind, token_b.kind,) {
-      (TokenKind::Num(a,), TokenKind::Num(b,),) => {
-        // If both operands are immediate values perform the operation during
-        // compilation
+    // Match the operation to see which instruction to add
+    match (op.kind, arg_type) {
+      // Handle Addition
+      (TokenKind::Add, ArgTypes::II(a, b)) => {
         let result = (a + b).to_le_bytes();
-
-        self.main.extend_from_slice(&[
-          OpCode::Load.into(),
-          target,
-          result[0],
-          result[1],
-          result[2],
-          result[3],
-        ],)
+        self.main.extend_from_slice(&[OpCode::Load.into(), dst, result[0], result[1], result[2], result[3],],)
       }
-      (TokenKind::Num(a,), TokenKind::Register(b,),) => {
-        // If a is an immediate value and b is a raw reg
-        let a = a.to_le_bytes();
-        self
-          .main
-          .extend_from_slice(&[OpCode::AddRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
-        // If a is an immediate value and b is a variable
-        let a = a.to_le_bytes();
-        let b = self.ident_to_reg(b, token_b.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::AddRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Register(a,), TokenKind::Num(b,),) => {
-        // If a is a register and b is an immediate value
-        let b = b.to_le_bytes();
-        self
-          .main
-          .extend_from_slice(&[OpCode::AddRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
-        // If a is a variable and b is an immediate value
-        let b = b.to_le_bytes();
-        let a = self.ident_to_reg(a, token_a.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::AddRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Register(a,), TokenKind::Register(b,),) => {
-        // If they are both registers
-        self
-          .main
-          .extend_from_slice(&[OpCode::AddRR.into(), target, a, b,],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
-        // If they are both identifiers
-        let a = self.ident_to_reg(a, token_a.span,);
-        let b = self.ident_to_reg(b, token_b.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::AddRR.into(), target, a, b,],)
-      }
-      _ => {}
-    }
-  }
-
-  #[rustfmt::skip]
-  pub(super) fn compile_sub_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
-    let target = match target.kind {
-      TokenKind::Register(reg,) => reg,
-      TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
-    };
-
-    match (token_a.kind, token_b.kind,) {
-      (TokenKind::Num(a,), TokenKind::Num(b,),) => {
-        // If both operands are immediate values perform the operation during
-        // compilation
+      (TokenKind::Add, ArgTypes::RI(a, b) | ArgTypes::IR(a, b)) => self.main.extend_from_slice(&[OpCode::AddRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Add, ArgTypes::RR(a, b)) => self.main.extend_from_slice(&[OpCode::AddRR.into(), dst, a, b]),
+      
+      // Handle Subtraction
+      (TokenKind::Sub, ArgTypes::II(a, b)) => {
         let result = (a - b).to_le_bytes();
-
-        self.main.extend_from_slice(&[
-          OpCode::Load.into(),
-          target,
-          result[0],
-          result[1],
-          result[2],
-          result[3],
-        ],)
+        self.main.extend_from_slice(&[OpCode::Load.into(), dst, result[0], result[1], result[2], result[3],],)
       }
-      (TokenKind::Num(a,), TokenKind::Register(b,),) => {
-        // If a is an immediate value and b is a raw reg
-        let a = a.to_le_bytes();
-        self.main.extend_from_slice(&[OpCode::RvSubRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
-        // If a is an immediate value and b is a variable
-        let a = a.to_le_bytes();
-        let b = self.ident_to_reg(b, token_b.span,);
-        self.main.extend_from_slice(&[OpCode::RvSubRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Register(a,), TokenKind::Num(b,),) => {
-        // If a is a register and b is an immediate value
-        let b = b.to_le_bytes();
-        self.main.extend_from_slice(&[OpCode::SubRI.into(),  target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
-        // If a is a variable and b is an immediate value
-        let b = b.to_le_bytes();
-        let a = self.ident_to_reg(a, token_a.span,);
-        self.main.extend_from_slice(&[OpCode::SubRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Register(a,), TokenKind::Register(b,),) => {
-        // If they are both registers
-        self
-          .main
-          .extend_from_slice(&[OpCode::SubRR.into(), target, a, b,],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
-        // If they are both identifiers
-        let a = self.ident_to_reg(a, token_a.span,);
-        let b = self.ident_to_reg(b, token_b.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::SubRR.into(), target, a, b,],)
-      }
-      _ => {}
-    }
-  }
-
-  pub(super) fn compile_mul_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
-    let target = match target.kind {
-      TokenKind::Register(reg,) => reg,
-      TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
-    };
-
-    match (token_a.kind, token_b.kind,) {
-      (TokenKind::Num(a,), TokenKind::Num(b,),) => {
-        // If both operands are immediate values perform the operation during
-        // compilation
+      (TokenKind::Sub, ArgTypes::RI(a, b)) => self.main.extend_from_slice(&[OpCode::SubRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Sub, ArgTypes::IR(a, b)) => self.main.extend_from_slice(&[OpCode::RvSubRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Sub, ArgTypes::RR(a, b)) => self.main.extend_from_slice(&[OpCode::SubRR.into(), dst, a, b]),
+      
+      // Handle Multiplication
+      (TokenKind::Mul, ArgTypes::II(a, b)) => {
         let result = (a * b).to_le_bytes();
-
-        self.main.extend_from_slice(&[
-          OpCode::Load.into(),
-          target,
-          result[0],
-          result[1],
-          result[2],
-          result[3],
-        ],)
+        self.main.extend_from_slice(&[OpCode::Load.into(), dst, result[0], result[1], result[2], result[3],],)
       }
-      (TokenKind::Num(a,), TokenKind::Register(b,),) => {
-        // If a is an immediate value and b is a raw reg
-        let a = a.to_le_bytes();
-        self
-          .main
-          .extend_from_slice(&[OpCode::MulRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
-        // If a is an immediate value and b is a variable
-        let a = a.to_le_bytes();
-        let b = self.ident_to_reg(b, token_b.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::MulRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Register(a,), TokenKind::Num(b,),) => {
-        // If a is a register and b is an immediate value
-        let b = b.to_le_bytes();
-        self
-          .main
-          .extend_from_slice(&[OpCode::MulRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
-        // If a is a variable and b is an immediate value
-        let b = b.to_le_bytes();
-        let a = self.ident_to_reg(a, token_a.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::MulRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Register(a,), TokenKind::Register(b,),) => {
-        // If they are both registers
-        self
-          .main
-          .extend_from_slice(&[OpCode::MulRR.into(), target, a, b,],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
-        // If they are both identifiers
-        let a = self.ident_to_reg(a, token_a.span,);
-        let b = self.ident_to_reg(b, token_b.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::MulRR.into(), target, a, b,],)
-      }
-      _ => {}
-    }
-  }
-
-  #[rustfmt::skip]
-  pub(super) fn compile_div_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
-    let target = match target.kind {
-      TokenKind::Register(reg,) => reg,
-      TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
-    };
-
-    match (token_a.kind, token_b.kind,) {
-      (TokenKind::Num(a,), TokenKind::Num(b,),) => {
-        // If both operands are immediate values perform the operation during
-        // compilation
+      (TokenKind::Mul, ArgTypes::RI(a, b) | ArgTypes::IR(a, b)) => self.main.extend_from_slice(&[OpCode::MulRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Mul, ArgTypes::RR(a, b)) => self.main.extend_from_slice(&[OpCode::MulRR.into(), dst, a, b]),
+      
+      // Handle Division
+      (TokenKind::Div, ArgTypes::II(a, b)) => {
         let result = (a / b).to_le_bytes();
-
-        self.main.extend_from_slice(&[
-          OpCode::Load.into(),
-          target,
-          result[0],
-          result[1],
-          result[2],
-          result[3],
-        ],)
+        self.main.extend_from_slice(&[OpCode::Load.into(), dst, result[0], result[1], result[2], result[3],],)
       }
-      (TokenKind::Num(a,), TokenKind::Register(b,),) => {
-        // If a is an immediate value and b is a raw reg
-        let a = a.to_le_bytes();
-        self.main.extend_from_slice(&[OpCode::RvDivRI.into(), target, b, a[0], a[1], a[2], a[3],],);
+      (TokenKind::Div, ArgTypes::RI(a, b)) => self.main.extend_from_slice(&[OpCode::DivRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Div, ArgTypes::IR(a, b)) => self.main.extend_from_slice(&[OpCode::RvDivRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Div, ArgTypes::RR(a, b)) => self.main.extend_from_slice(&[OpCode::DivRR.into(), dst, a, b]),
+      
+      // Handle Exponentiation
+      (TokenKind::Pow, ArgTypes::II(a, b)) => {
+        let result = (a.powf(b)).to_le_bytes();
+        self.main.extend_from_slice(&[OpCode::Load.into(), dst, result[0], result[1], result[2], result[3],],)
       }
-      (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
-        // If a is an immediate value and b is a variable
-        let a = a.to_le_bytes();
-        let b = self.ident_to_reg(b, token_b.span,);
-        self.main.extend_from_slice(&[OpCode::RvDivRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Register(a,), TokenKind::Num(b,),) => {
-        // If a is a register and b is an immediate value
-        let b = b.to_le_bytes();
-        
-      self.main.extend_from_slice(&[OpCode::DivRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
-        // If a is a variable and b is an immediate value
-        let b = b.to_le_bytes();
-        let a = self.ident_to_reg(a, token_a.span,);
-        self.main.extend_from_slice(&[OpCode::DivRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Register(a,), TokenKind::Register(b,),) => {
-        // If they are both registers
-        self
-          .main
-          .extend_from_slice(&[OpCode::DivRR.into(), target, a, b,],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
-        // If they are both identifiers
-        let a = self.ident_to_reg(a, token_a.span,);
-        let b = self.ident_to_reg(b, token_b.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::DivRR.into(), target, a, b,],)
-      }
-      _ => {}
+      (TokenKind::Pow, ArgTypes::RI(a, b)) => self.main.extend_from_slice(&[OpCode::PowRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Pow, ArgTypes::IR(a, b)) => self.main.extend_from_slice(&[OpCode::RvPowRI.into(), dst, a, b[0], b[1], b[2], b[3]]),
+      (TokenKind::Pow, ArgTypes::RR(a, b)) => self.main.extend_from_slice(&[OpCode::PowRR.into(), dst, a, b]),
+      _=> unreachable!()
     }
+
   }
 
-  #[rustfmt::skip]
-  pub(super) fn compile_pow_expr(&mut self, target:&Token, token_a:&Token, token_b:&Token,) {
-    let target = match target.kind {
-      TokenKind::Register(reg,) => reg,
-      TokenKind::Identifier(name,) => self.ident_to_reg(name, target.span,),
-      _ => unreachable!("{}", ASMError::NotRegisterOrIdent{token:*target},),
-    };
-
-    match (token_a.kind, token_b.kind,) {
-      (TokenKind::Num(a,), TokenKind::Num(b,),) => {
-        // If both operands are immediate values perform the operation during
-        // compilation
-        let result = (a.powf(b,)).to_le_bytes();
-
-        self.main.extend_from_slice(&[
-          OpCode::Load.into(),
-          target,
-          result[0],
-          result[1],
-          result[2],
-          result[3],
-        ],)
-      }
-      (TokenKind::Num(a,), TokenKind::Register(b,),) => {
-        // If a is an immediate value and b is a raw reg
-        let a = a.to_le_bytes(); 
-        self.main.extend_from_slice(&[OpCode::RvPowRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Num(a,), TokenKind::Identifier(b,),) => {
-        // If a is an immediate value and b is a variable
-        let a = a.to_le_bytes();
-        let b = self.ident_to_reg(b, token_b.span,);
-        self.main.extend_from_slice(&[OpCode::RvPowRI.into(), target, b, a[0], a[1], a[2], a[3],],);
-      }
-      (TokenKind::Register(a,), TokenKind::Num(b,),) => {
-        // If a is a register and b is an immediate value
-        let b = b.to_le_bytes();
-        self.main.extend_from_slice(&[OpCode::PowRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Num(b,),) => {
-        // If a is a variable and b is an immediate value
-        let b = b.to_le_bytes();
-        let a = self.ident_to_reg(a, token_a.span,);
-        self.main.extend_from_slice(&[OpCode::PowRI.into(), target, a, b[0], b[1], b[2], b[3],],)
-      }
-      (TokenKind::Register(a,), TokenKind::Register(b,),) => {
-        // If they are both registers
-        self
-          .main
-          .extend_from_slice(&[OpCode::PowRR.into(), target, a, b,],)
-      }
-      (TokenKind::Identifier(a,), TokenKind::Identifier(b,),) => {
-        // If they are both identifiers
-        let a = self.ident_to_reg(a, token_a.span,);
-        let b = self.ident_to_reg(b, token_b.span,);
-        self
-          .main
-          .extend_from_slice(&[OpCode::PowRR.into(), target, a, b,],)
-      }
-      _ => {}
-    }
-  }
+  
 
   /// Compiles the current comparison expression and returns the  [`Program`].
   pub(super) fn compile_cond_expr(&mut self,) -> Program {

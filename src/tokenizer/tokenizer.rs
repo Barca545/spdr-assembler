@@ -116,8 +116,6 @@ impl Lexer {
       '}' => Some(TokenKind::RCurlyBracket,),
       '[' => Some(TokenKind::LBracket,),
       ']' => Some(TokenKind::RBracket,),
-      '=' => Some(TokenKind::EqualSign,),
-      // '+' | '-' | '*' | '/' => return self.tokenize_math_sym(),
       // Catch a raw register declaration
       '$' => return self.tokenize_register(),
       _ => None,
@@ -149,7 +147,6 @@ impl Lexer {
 
       // Match against kwds
       let kind = match wrd.to_uppercase().as_str() {
-        "CONST" => TokenKind::Const,
         "VAR" => TokenKind::Var,
         "ADD" => TokenKind::Add,
         "SUB" => TokenKind::Sub,

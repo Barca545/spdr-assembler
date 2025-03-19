@@ -130,68 +130,65 @@ fn test_tokenize() {
   assert_eq!(tokens[1].kind, TokenKind::Identifier(0));
   assert_eq!(tokens[1].span, Span::new([4, 1, 5], [6, 1, 7]));
 
-  assert_eq!(tokens[2].kind, TokenKind::EqualSign);
-  assert_eq!(tokens[2].span, Span::new([8, 1, 9], [8, 1, 9]));
+  assert_eq!(tokens[2].kind, TokenKind::Num(15.0));
+  assert_eq!(tokens[2].span, Span::new([8, 1, 9], [9, 1, 10]));
 
-  assert_eq!(tokens[3].kind, TokenKind::Num(15.0));
-  assert_eq!(tokens[3].span, Span::new([10, 1, 11], [11, 1, 12]));
+  assert_eq!(tokens[3].kind, TokenKind::If);
+  assert_eq!(tokens[3].span, Span::new([12, 2, 1], [13, 2, 2]));
 
-  assert_eq!(tokens[4].kind, TokenKind::If);
-  assert_eq!(tokens[4].span, Span::new([14, 2, 1], [15, 2, 2]));
+  assert_eq!(tokens[4].kind, TokenKind::Gt);
+  assert_eq!(tokens[4].span, Span::new([15, 2, 4], [16, 2, 5]));
 
-  assert_eq!(tokens[5].kind, TokenKind::Gt);
-  assert_eq!(tokens[5].span, Span::new([17, 2, 4], [18, 2, 5]));
+  assert_eq!(tokens[5].kind, TokenKind::Identifier(0));
+  assert_eq!(tokens[5].span, Span::new([18, 2, 7], [20, 2, 9]));
 
-  assert_eq!(tokens[6].kind, TokenKind::Identifier(0));
-  assert_eq!(tokens[6].span, Span::new([20, 2, 7], [22, 2, 9]));
+  assert_eq!(tokens[6].kind, TokenKind::Num(14.0));
+  assert_eq!(tokens[6].span, Span::new([22, 2, 11], [23, 2, 12]));
 
-  assert_eq!(tokens[7].kind, TokenKind::Num(14.0));
-  assert_eq!(tokens[7].span, Span::new([24, 2, 11], [25, 2, 12]));
+  assert_eq!(tokens[7].kind, TokenKind::LCurlyBracket);
+  assert_eq!(tokens[7].span, Span::new([25, 2, 14], [25, 2, 14]));
 
-  assert_eq!(tokens[8].kind, TokenKind::LCurlyBracket);
-  assert_eq!(tokens[8].span, Span::new([27, 2, 14], [27, 2, 14]));
+  assert_eq!(tokens[8].kind, TokenKind::Call);
+  assert_eq!(tokens[8].span, Span::new([30, 3, 3], [33, 3, 6]));
 
-  assert_eq!(tokens[9].kind, TokenKind::Call);
-  assert_eq!(tokens[9].span, Span::new([32, 3, 3], [35, 3, 6]));
+  assert_eq!(tokens[9].kind, TokenKind::Identifier(1));
+  assert_eq!(tokens[9].span, Span::new([35, 3, 8], [37, 3, 10]));
 
-  assert_eq!(tokens[10].kind, TokenKind::Identifier(1));
-  assert_eq!(tokens[10].span, Span::new([37, 3, 8], [39, 3, 10]));
+  assert_eq!(tokens[10].kind, TokenKind::RCurlyBracket);
+  assert_eq!(tokens[10].span, Span::new([40, 4, 1], [40, 4, 1]));
 
-  assert_eq!(tokens[11].kind, TokenKind::RCurlyBracket);
-  assert_eq!(tokens[11].span, Span::new([42, 4, 1], [42, 4, 1]));
+  assert_eq!(tokens[11].kind, TokenKind::Else);
+  assert_eq!(tokens[11].span, Span::new([43, 5, 1], [46, 5, 4]));
 
-  assert_eq!(tokens[12].kind, TokenKind::Else);
-  assert_eq!(tokens[12].span, Span::new([45, 5, 1], [48, 5, 4]));
+  assert_eq!(tokens[12].kind, TokenKind::If);
+  assert_eq!(tokens[12].span, Span::new([48, 5, 6], [49, 5, 7]));
 
-  assert_eq!(tokens[13].kind, TokenKind::If);
-  assert_eq!(tokens[13].span, Span::new([50, 5, 6], [51, 5, 7]));
+  assert_eq!(tokens[13].kind, TokenKind::Lt);
+  assert_eq!(tokens[13].span, Span::new([51, 5, 9], [52, 5, 10]));
 
-  assert_eq!(tokens[14].kind, TokenKind::Lt);
-  assert_eq!(tokens[14].span, Span::new([53, 5, 9], [54, 5, 10]));
+  assert_eq!(tokens[14].kind, TokenKind::Identifier(0));
+  assert_eq!(tokens[14].span, Span::new([54, 5, 12], [56, 5, 14]));
 
-  assert_eq!(tokens[15].kind, TokenKind::Identifier(0));
-  assert_eq!(tokens[15].span, Span::new([56, 5, 12], [58, 5, 14]));
+  assert_eq!(tokens[15].kind, TokenKind::Num(4.0));
+  assert_eq!(tokens[15].span, Span::new([58, 5, 16], [58, 5, 16]));
 
-  assert_eq!(tokens[16].kind, TokenKind::Num(4.0));
-  assert_eq!(tokens[16].span, Span::new([60, 5, 16], [60, 5, 16]));
+  assert_eq!(tokens[16].kind, TokenKind::LCurlyBracket);
+  assert_eq!(tokens[16].span, Span::new([60, 5, 18], [60, 5, 18]));
 
-  assert_eq!(tokens[17].kind, TokenKind::LCurlyBracket);
-  assert_eq!(tokens[17].span, Span::new([62, 5, 18], [62, 5, 18]));
+  assert_eq!(tokens[17].kind, TokenKind::Add);
+  assert_eq!(tokens[17].span, Span::new([65, 6, 3], [67, 6, 5]));
 
-  assert_eq!(tokens[18].kind, TokenKind::Add);
-  assert_eq!(tokens[18].span, Span::new([67, 6, 3], [69, 6, 5]));
+  assert_eq!(tokens[18].kind, TokenKind::Identifier(0));
+  assert_eq!(tokens[18].span, Span::new([69, 6, 7], [71, 6, 9]));
 
   assert_eq!(tokens[19].kind, TokenKind::Identifier(0));
-  assert_eq!(tokens[19].span, Span::new([71, 6, 7], [73, 6, 9]));
+  assert_eq!(tokens[19].span, Span::new([73, 6, 11], [75, 6, 13]));
 
-  assert_eq!(tokens[20].kind, TokenKind::Identifier(0));
-  assert_eq!(tokens[20].span, Span::new([75, 6, 11], [77, 6, 13]));
+  assert_eq!(tokens[20].kind, TokenKind::Num(90.0));
+  assert_eq!(tokens[20].span, Span::new([77, 6, 15], [78, 6, 16]));
 
-  assert_eq!(tokens[21].kind, TokenKind::Num(90.0));
-  assert_eq!(tokens[21].span, Span::new([79, 6, 15], [80, 6, 16]));
-
-  assert_eq!(tokens[22].kind, TokenKind::RCurlyBracket);
-  assert_eq!(tokens[22].span, Span::new([83, 7, 1], [83, 7, 1]));
+  assert_eq!(tokens[21].kind, TokenKind::RCurlyBracket);
+  assert_eq!(tokens[21].span, Span::new([81, 7, 1], [81, 7, 1]));
 }
 
 #[test]

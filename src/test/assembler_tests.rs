@@ -2,7 +2,7 @@ use crate::{interner::intern, Compiler, Ty, VarDecl};
 use spdr_isa::{
   opcodes::{CmpFlag, OpCode},
   program::Program,
-  registers::{EQ, LOOP},
+  registers::{EQ, FIRST_FREE_REGISTER, LOOP},
 };
 use spdr_vm::vm::VM;
 use std::{any::Any, io, path::PathBuf};
@@ -46,6 +46,35 @@ fn compile_load_cpy() {
     OpCode::Copy.into(), 15, 12,
     OpCode::Hlt.into(),
   ];
+  assert_eq!(p.as_slice(), expected);
+}
+
+#[test]
+#[rustfmt::skip]
+fn var_works_in_asm() {
+  let p = Compiler::new("Var foo 15 Var bar 60 Add foo foo 30 Add foo foo bar", io::stdout(),).compile();
+
+  // No clue why any change I made broke this
+
+  let num_15 = 15.0f32.to_le_bytes();
+  let num_60 = 60.0f32.to_le_bytes();
+  let num_30 = 30.0f32.to_le_bytes();
+  let foo = FIRST_FREE_REGISTER as u8;
+  let bar = FIRST_FREE_REGISTER as u8 + 1;
+
+  // Loads happen twice because the function parsing prelude also parses variables
+  // That explains the jump being wrong
+  // Prelude should just register the variable not actually load it
+
+  let expected = [
+    OpCode::Jmp.into(), 5, 0, 0, 0,
+    OpCode::Load.into(), foo, num_15[0], num_15[1], num_15[2], num_15[3],
+    OpCode::Load.into(), bar, num_60[0], num_60[1], num_60[2], num_60[3],
+    OpCode::AddRI.into(), foo, foo, num_30[0], num_30[1], num_30[2], num_30[3],
+    OpCode::AddRR.into(), foo, foo, bar,
+    OpCode::Hlt.into(),
+  ];
+
   assert_eq!(p.as_slice(), expected);
 }
 

@@ -1,4 +1,4 @@
-var foo = 15
+var foo 15
 if GT foo 14 {
   call bar
 }

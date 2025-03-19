@@ -192,24 +192,32 @@ impl<'tcx,> Compiler<'tcx,> {
   /// Adds an identifier to the [`Compiler`]'s Symbol Table as a
   /// [`Ty::Register`].
   fn add_as_reg(&mut self, ident:Token,) -> u8 {
-    // Get the currently open register and update the indicator to the next open
-    // register
-    let reg = self.reserve_reg();
-
-    assert!(reg <= REG_COUNT as u8, "New register allocation strategy needed");
-
-    match ident {
+    let ident = match ident {
       Token {
-        kind: TokenKind::Identifier(sym_idx,),
+        kind: TokenKind::Identifier(ident,),
         ..
-      } => {
+      } => ident,
+      
+      other => panic!("Tried to make a non identifier {}{} into a variable", other.kind, other.span.start),
+    };
+
+    // If the table already has the var it cannot be redeclared.
+    // The first value will be used
+    match self.table.get(&ident){
+      Some(decl) => match decl.ty {
+        Ty::Register(reg) => reg,
+        ty=> panic!("{} is already declared as a {}", lookup(ident), ty)
+      },
+      None => {
+        let reg = self.reserve_reg();
+        assert!(reg <= REG_COUNT as u8, "New register allocation strategy needed");
+
         self
           .table
-          .insert(sym_idx, VarDecl::new(Ty::Register(reg,),),);
-      }
-      _ => panic!("Tried to make a non identifier {} into a variable", ident.kind),
+          .insert(ident, VarDecl::new(Ty::Register(reg,),),);
+        reg
+      },
     }
-    reg
   }
 
   /// Read a `*.hd` file from the given path.
@@ -316,10 +324,17 @@ impl<'tcx,> Compiler<'tcx,> {
   /// Compiles the .spdr file loaded into the compiler into a .spex executable
   /// file.
   fn compile(&mut self,) -> Program {
-    // Compile only the functions and store them at the beginning of the binary
+    // Compile only the functions and variables and store them at the beginning of the binary
     while let Some(instruction) = self.next_token(){
       match instruction.kind{
         TokenKind::Fn => self.compile_current_instruction(),
+        TokenKind::Var => {
+          // Add the next token to the symbol table assuming it is an ident
+          let ident =  self.next_token().unwrap();
+          self.add_as_reg(ident,);
+          // Consume the literal 
+          self.eat_tokens(4,)
+        }
         _=> self.eat_current_instruction(),
       }
     }
@@ -361,9 +376,9 @@ impl<'tcx,> Compiler<'tcx,> {
       TokenKind::Call | TokenKind::SysCall | TokenKind::Push | TokenKind::PopR | TokenKind::Ret => {
         self.eat_tokens(1,)
       }
-
       // Consume 2 tokens
       TokenKind::Load
+      | TokenKind::Var
       | TokenKind::Not
       | TokenKind::Eq
       | TokenKind::Gt
@@ -373,12 +388,10 @@ impl<'tcx,> Compiler<'tcx,> {
       | TokenKind::MemCpy
       | TokenKind::Copy
       | TokenKind::Alloc => self.eat_tokens(2,),
-
       // Consume 3 tokens
       TokenKind::Add | TokenKind::Sub | TokenKind::Mul | TokenKind::Div | TokenKind::Pow => {
         self.eat_tokens(3,)
       }
-
       // Consume 4 tokens
       TokenKind::Wmem | TokenKind::Rmem => self.eat_tokens(4,),
 
@@ -424,9 +437,21 @@ impl<'tcx,> Compiler<'tcx,> {
   #[rustfmt::skip]
   /// Compile the next intruction in the program.
   fn compile_current_instruction(&mut self,) {
-    match self.current_instruction.kind {
+    let instruction = self.current_instruction;
+    match instruction.kind {
       TokenKind::Load => {
         let reg = self.next_token_as_register();
+
+        // Get the immediate as an array and generate the instruction
+        let val = self.next_token_as_immediate_array();
+        self
+          .main
+          .extend_from_slice(&[OpCode::Load.into(), reg, val[0], val[1], val[2], val[3],],);
+      }
+      TokenKind::Var => {
+        // Add the next token to the symbol table assuming it is an ident
+        let ident =  self.next_token().unwrap();
+        let reg = self.add_as_reg(ident,);
 
         // Get the immediate as an array and generate the instruction
         let val = self.next_token_as_immediate_array();
@@ -439,52 +464,11 @@ impl<'tcx,> Compiler<'tcx,> {
         let src = self.next_token_as_register();
         self.main.extend_from_slice(&[OpCode::Copy.into(), dst, src,],)
       }
-      TokenKind::Var => {
-        // Add the next token to the symbol table assuming it is an ident
-        let ident =  self.next_token().unwrap();
-        let reg = self.add_as_reg(ident,);
-
-        // Eat the `=` sign
-        if TokenKind::EqualSign !=  self.next_token().unwrap().kind {
-          panic!("{}", ASMError::NoEquals(self.current_instruction.kind))
-        }
-
-        // Get the immediate as an array and generate the instruction
-        let val = self.next_token_as_immediate_array();
-        self
-          .main
-          .extend_from_slice(&[OpCode::Load.into(), reg, val[0], val[1], val[2], val[3],],);
-      }
-      TokenKind::Add => {
-        let target =  self.next_token().unwrap();
-        let a =  self.next_token().unwrap();
-        let b =  self.next_token().unwrap();
-        self.compile_add_expr(&target, &a, &b,)
-      }
-      TokenKind::Sub => {
-        let target =  self.next_token().unwrap();
-        let a =  self.next_token().unwrap();
-        let b =  self.next_token().unwrap();
-        self.compile_sub_expr(&target, &a, &b,)
-      }
-      TokenKind::Mul => {
-        let target =  self.next_token().unwrap();
-        let a =  self.next_token().unwrap();
-        let b =  self.next_token().unwrap();
-        self.compile_mul_expr(&target, &a, &b,)
-      }
-      TokenKind::Div => {
-        let target =  self.next_token().unwrap();
-        let a =  self.next_token().unwrap();
-        let b =  self.next_token().unwrap();
-        self.compile_div_expr(&target, &a, &b,)
-      }
-      TokenKind::Pow => {
-        let target =  self.next_token().unwrap();
-        let a =  self.next_token().unwrap();
-        let b =  self.next_token().unwrap();
-        self.compile_pow_expr(&target, &a, &b,)
-      }
+      TokenKind::Add 
+      | TokenKind::Sub 
+      | TokenKind::Mul 
+      | TokenKind::Div 
+      | TokenKind::Pow => self.compile_arithmetic_expr(),
       TokenKind::Not => {
         let dst = match  self.next_token().unwrap() {
           Token {
@@ -738,4 +722,3 @@ impl<'tcx,> Compiler<'tcx,> {
     }
   }
 }
-
