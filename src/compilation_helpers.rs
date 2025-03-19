@@ -252,7 +252,7 @@ impl<'tcx,> Compiler<'tcx,> {
     }
   }
 
-  #[rustfmt::skip]
+  /// Compile an arithmetic operation (ADD, SUB, MUL, DIV, POW).
   pub (super) fn compile_arithmetic_expr(&mut self,){
     let op = self.current_instruction;
     // Get the destination

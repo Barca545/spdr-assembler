@@ -197,12 +197,10 @@ impl<'tcx,> Compiler<'tcx,> {
         kind: TokenKind::Identifier(ident,),
         ..
       } => ident,
-      
       other => panic!("Tried to make a non identifier {}{} into a variable", other.kind, other.span.start),
     };
 
     // If the table already has the var it cannot be redeclared.
-    // The first value will be used
     match self.table.get(&ident){
       Some(decl) => match decl.ty {
         Ty::Register(reg) => reg,
