@@ -1,28 +1,60 @@
-use crate::{interner::intern, Compiler, Ty, VarDecl};
+use crate::{interner::intern, symbol_table::Ty, Compiler, VarDecl};
 use spdr_isa::{
   opcodes::{CmpFlag, OpCode},
   program::Program,
   registers::{EQ, FIRST_FREE_REGISTER, LOOP},
 };
 use spdr_vm::vm::VM;
-use std::{any::Any, io, path::PathBuf};
+use std::{
+  any::Any,
+  io::{self, stdout},
+  path::PathBuf,
+};
 
 #[test]
 fn load_header() {
   let mut compiler = Compiler::new("", io::stdout(),);
   compiler.read_header(PathBuf::from("../spdr-assembler/src/test/test_header.hd",),);
 
-  let decl_1 = match compiler.table.get(&intern("foo",),).unwrap().ty {
+  let decl_1 = match compiler.table.lookup(&intern("foo",),).unwrap().ty {
     Ty::ExternalFunction(idx,) => idx,
     _ => panic!(),
   };
   assert_eq!(decl_1, 0);
 
-  let decl_2 = match compiler.table.get(&intern("bar",),).unwrap().ty {
+  let decl_2 = match compiler.table.lookup(&intern("bar",),).unwrap().ty {
     Ty::ExternalFunction(idx,) => idx,
     _ => panic!(),
   };
   assert_eq!(decl_2, 1);
+}
+
+#[test]
+#[rustfmt::skip]
+fn entering_and_exiting_scope_works() {
+  let p = Compiler::new("VAR foo 15 FN bar {VAR foo 13 ADD foo foo 1 RET 0}", stdout(),).compile();
+
+  // Because functions compile first, this is the first variable which will be picked up
+  let foo1 = FIRST_FREE_REGISTER as u8;
+  let foo2 = FIRST_FREE_REGISTER  as u8 + 1;
+
+  // Numbers 
+  let num_13 = 13.0f32.to_le_bytes();
+  let num_15 = 15.0f32.to_le_bytes();
+
+  // Confirm the var in bar and the var in main space have different values
+  let expected = [
+    OpCode::Jmp.into(), 20, 0, 0, 0, //main starts on 20
+    // Beginning of the function
+    OpCode::Load.into(), foo1, num_13[0], num_13[1], num_13[2], num_13[3],
+    OpCode::AddRI.into(), foo1, foo1, 0, 0, 128, 63,
+    OpCode::Ret.into(), 0, 
+    // Beginning of main
+    OpCode::Load.into(), foo2, num_15[0], num_15[1], num_15[2], num_15[3],
+    OpCode::Hlt.into(),
+  ];
+
+  assert_eq!(p.as_slice(), expected);
 }
 
 #[test]
@@ -52,9 +84,7 @@ fn compile_load_cpy() {
 #[test]
 #[rustfmt::skip]
 fn var_works_in_asm() {
-  let p = Compiler::new("Var foo 15 Var bar 60 Add foo foo 30 Add foo foo bar", io::stdout(),).compile();
-
-  // No clue why any change I made broke this
+  let p = Compiler::new("VAR foo 15 VAR bar 60 ADD foo foo 30 ADD foo foo bar FN test {}", io::stdout(),).compile();
 
   let num_15 = 15.0f32.to_le_bytes();
   let num_60 = 60.0f32.to_le_bytes();
@@ -592,7 +622,7 @@ fn compile_when_single_function_defined(){
   let mut c = Compiler::new("Sub $54 $34 $65 FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30", io::stdout());
   let p = c.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.get(&intern("foo")){
+  match c.table.lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -623,7 +653,7 @@ fn compile_call_when_single_function_defined_before_calling(){
   let mut c = Compiler::new("Sub $54 $34 $65 fn foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30 CALL foo", io::stdout());
   let p = c.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.get(&intern("foo")){
+  match c.table.lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -655,7 +685,7 @@ fn compile_when_single_function_defined_after_call(){
   let mut c = Compiler::new("CALL foo SUB $54 $34 $65 CALL foo FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
   let p = c.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.get(&intern("foo")){
+  match c.table.lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -688,7 +718,7 @@ fn compile_when_single_function_contains_recursion(){
   let mut c = Compiler::new("CALL foo FN foo {ADD $14 $14 $15 CALL foo NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
   let p = c.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.get(&intern("foo")){
+  match c.table.lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -725,7 +755,7 @@ fn compile_when_multiple_functions_defined(){
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &0);
-  match c.table.get(foo_fn_idx){
+  match c.table.lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -733,7 +763,7 @@ fn compile_when_multiple_functions_defined(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &1);
-  match c.table.get(bar_fn_idx){
+  match c.table.lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -763,7 +793,7 @@ fn compile_call_when_multiple_functions_defined_before_calling(){
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &0);
-  match c.table.get(foo_fn_idx){
+  match c.table.lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -771,7 +801,7 @@ fn compile_call_when_multiple_functions_defined_before_calling(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &1);
-  match c.table.get(bar_fn_idx){
+  match c.table.lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -804,7 +834,7 @@ fn compile_when_multiple_functions_defined_after_call(){
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &1);
-  match c.table.get(foo_fn_idx){
+  match c.table.lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -812,7 +842,7 @@ fn compile_when_multiple_functions_defined_after_call(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &0);
-  match c.table.get(bar_fn_idx){
+  match c.table.lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -1424,7 +1454,7 @@ fn compile_multiple_functions_when_one_calls_other_before_other_defined(){
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &1);
-  match c.table.get(foo_fn_idx){
+  match c.table.lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0,]),
     _ => panic!("Should be a function pointer"),
   }
@@ -1432,7 +1462,7 @@ fn compile_multiple_functions_when_one_calls_other_before_other_defined(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &0);
-  match c.table.get(bar_fn_idx){
+  match c.table.lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [12, 0, 0, 0,]),
     _ => panic!("Should be a function pointer"),
   }

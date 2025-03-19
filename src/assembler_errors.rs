@@ -1,4 +1,4 @@
-use crate::{tokenizer::TokenKind, Span, Token, Ty};
+use crate::{symbol_table::Ty, tokenizer::TokenKind, Span, Token};
 use thiserror::Error;
 
 #[derive(Debug, Error,)]

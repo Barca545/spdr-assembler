@@ -5,6 +5,7 @@ mod error_printing;
 mod interner;
 mod tokenizer;
 mod cli_integration;
+mod symbol_table;
 mod test;
 
 use assembler_errors::ASMError;
@@ -15,32 +16,11 @@ use spdr_isa::{
   program::Program,
   registers::{FIRST_FREE_REGISTER, REG_COUNT},
 };
+use symbol_table::{SymbolTable, Ty, VarDecl};
 use std::{
-  collections::HashMap, fmt::{Debug, Display}, fs::read_to_string, io::{self, Write}, path::PathBuf, usize
+  collections::HashMap, fmt::Debug, fs::read_to_string, io::{self, Write}, path::PathBuf, usize
 };
 use tokenizer::{Lexer, Span, Token, TokenKind};
-
-// Refactor:
-// - I think there has to be something I can do when parsing a line instead of
-//   unwrapping next. It would be better to handle the `Option`. Probably as
-//   simple as returning an error if the unwrap fails that says expected X/Y/Z
-//   tokens should recieve its own symbol table to prevent this
-// - I think there has to be a better way of storing the src to print than
-//   storing it in the compiler like that. maybe just intern the whole thing and
-//   reference it that way
-// - `compile_block_return` can be implemented way more efficiently
-// - Currently all identifiers must be unique. I am not actually sure this
-//   bothers me.
-
-
-// TODO:
-// - Jump instructions should accept labels as arguments
-// - Add array compilation
-
-// Compiler Rules
-// - LOOP/WHILE/FOR must have their own lines
-// - The beginning and end of blocks need their own lines
-// - All variables are global. Names must be unique
 
 fn main() { 
   let args = cli_integration::parse_arguments().unwrap();
@@ -62,56 +42,6 @@ fn main() {
   program.save(output_file,).unwrap();
 }
 
-#[derive(Debug, Clone, Copy,)]
-//JUMP AND JNZ will never take a Register as an arg.
-enum Ty {
-  /// Registers hold the index of their assigned register
-  Register(u8,),
-  /// Labels hold the index number the label references.
-  Label(usize,),
-  /// Functions hold the function's address as a `[u8;4]`;
-  Function([u8;4]),
-  /// Functions hold the index the VM where stores them in its collection of
-  /// external functions.
-  ExternalFunction(u8,),
-}
-
-impl Display for Ty {
-  fn fmt(&self, f:&mut std::fmt::Formatter<'_,>,) -> std::fmt::Result {
-    match self {
-      Ty::Register(v,) => write!(f, "Reg({})", v),
-      Ty::Label(v,) => write!(f, "Label({})", v),
-      Ty::Function(ptr ) => write!(f, "Function(patch_index: {:?}", ptr,),
-      Ty::ExternalFunction(idx,) => write!(f, "ExternalFunction({idx})"),
-    }
-  }
-}
-
-#[derive(Clone, Copy,)]
-/// A Symbol Table entry. Contains information about identities in the source
-/// code.
-struct VarDecl {
-  ty:Ty,
-}
-
-impl Display for VarDecl {
-  fn fmt(&self, f:&mut std::fmt::Formatter<'_,>,) -> std::fmt::Result {
-    write!(f, "VarDecl(ty: {})", self.ty)
-  }
-}
-
-impl Debug for VarDecl {
-  fn fmt(&self, f:&mut std::fmt::Formatter<'_,>,) -> std::fmt::Result {
-    Display::fmt(&self, f,)
-  }
-}
-
-impl VarDecl {
-  fn new(ty:Ty,) -> Self {
-    Self { ty, }
-  }
-}
-
 #[derive(Debug, Clone, Default, PartialEq)]
 enum CompilerPhase{
   #[default]
@@ -126,8 +56,8 @@ struct Compiler<'tcx,> {
   cursor:usize,
   /// The [`Token`] the compiler is currently reading.
   current_instruction:Token,
-  /// The Symbol Table for the currently compiling program.
-  table:HashMap<u32, VarDecl,>,
+  /// The Symbol Table for the current scope.
+  table:SymbolTable,
   function_patches:HashMap<u32,Patch>,
   open:u8,
   /// The body of the binary's "`main`" function.
@@ -145,7 +75,7 @@ impl<'tcx,> Compiler<'tcx,> {
       tokens,
       cursor:0,
       current_instruction,
-      table:HashMap::new(),
+      table:SymbolTable::new(),
       function_patches:HashMap::new(),
       main:Program::new(),
       open:FIRST_FREE_REGISTER as u8,
@@ -200,8 +130,9 @@ impl<'tcx,> Compiler<'tcx,> {
       other => panic!("Tried to make a non identifier {}{} into a variable", other.kind, other.span.start),
     };
 
+    
     // If the table already has the var it cannot be redeclared.
-    match self.table.get(&ident){
+    match self.table.lookup(&ident){
       Some(decl) => match decl.ty {
         Ty::Register(reg) => reg,
         ty=> panic!("{} is already declared as a {}", lookup(ident), ty)
@@ -212,7 +143,7 @@ impl<'tcx,> Compiler<'tcx,> {
 
         self
           .table
-          .insert(ident, VarDecl::new(Ty::Register(reg,),),);
+          .add_symbol(ident, VarDecl::new(Ty::Register(reg,),),);
         reg
       },
     }
@@ -238,7 +169,7 @@ impl<'tcx,> Compiler<'tcx,> {
       // Store the function in the symbol table
       self
         .table
-        .insert(sym, VarDecl::new(Ty::ExternalFunction(idx as u8,),),);
+        .add_symbol(sym, VarDecl::new(Ty::ExternalFunction(idx as u8,),),);
     }
   }
 
@@ -248,7 +179,7 @@ impl<'tcx,> Compiler<'tcx,> {
   fn ident_to_reg(&self, name:u32, span:Span,) -> u8 {
     // Convert a variable declaration into a register
     // Error if the variable has not been declared
-    let decl = match self.table.get(&name,) {
+    let decl = match self.table.lookup(&name,) {
       Some(decl,) => decl,
       None => panic!("{}", ASMError::UndeclaredIdentifier{ ident: &lookup(name), span }),
     };
@@ -281,7 +212,7 @@ impl<'tcx,> Compiler<'tcx,> {
     self.function_patches.entry(*name).and_modify(|patch|patch.update_address(addr).unwrap());
 
     // Create an entry in the symbol table
-    self.table.insert(*name, VarDecl { ty:Ty::Function((addr as u32).to_le_bytes()) });
+    self.table.add_symbol(*name, VarDecl { ty:Ty::Function((addr as u32).to_le_bytes()) });
   }
 
   /// If the next [`Token`] in the source is a [`TokenKind::Bool`] or
@@ -326,13 +257,6 @@ impl<'tcx,> Compiler<'tcx,> {
     while let Some(instruction) = self.next_token(){
       match instruction.kind{
         TokenKind::Fn => self.compile_current_instruction(),
-        TokenKind::Var => {
-          // Add the next token to the symbol table assuming it is an ident
-          let ident =  self.next_token().unwrap();
-          self.add_as_reg(ident,);
-          // Consume the literal 
-          self.eat_tokens(4,)
-        }
         _=> self.eat_current_instruction(),
       }
     }
@@ -548,7 +472,7 @@ impl<'tcx,> Compiler<'tcx,> {
         };  
       
         // Create a function declaration and store it in the symbol table
-        match self.table.get(&name,) {
+        match self.table.lookup(&name,) {
           // If the name is already in the table then 
           Some(_) => panic!("{}", ASMError::UnavailableFunctionName(&lookup(name))),
           None => {
@@ -571,7 +495,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // Place the Call opcode in the function
         self.main.push(OpCode::Call.into(),);
 
-        match self.table.get(&name){
+        match self.table.lookup(&name){
           // If the function already has a symbol table entry attempt to retrieve its pointer
           Some(VarDecl { ty: Ty::Function(ptr)}) => {
             self.main.extend_from_slice(ptr,)
@@ -591,7 +515,7 @@ impl<'tcx,> Compiler<'tcx,> {
             kind: TokenKind::Identifier(idx,),
             span,
             // Get the vardecl associated with the identifer
-          } => match self.table.get(&idx,) {
+          } => match self.table.lookup(&idx,) {
             // Confirm the decl is an external function
             Some(decl,) => match decl.ty {
               Ty::ExternalFunction(idx,) => idx,
@@ -612,7 +536,7 @@ impl<'tcx,> Compiler<'tcx,> {
         // The label's address is the current len of the program
         self
           .table
-          .insert(name, VarDecl::new(Ty::Label(self.main.len(),),),);
+          .add_symbol(name, VarDecl::new(Ty::Label(self.main.len(),),),);
       }
       TokenKind::Noop => self.main.push(OpCode::Noop.into(),),
       TokenKind::Push => {
@@ -703,12 +627,16 @@ impl<'tcx,> Compiler<'tcx,> {
 
   /// Compile the next block in the program.
   fn compile_block(&mut self,) {
-    let next = self.next_token().unwrap();
-    assert!(
-      next.kind == TokenKind::LCurlyBracket,
-      "Block must begin with {{ not {}",
-      next.kind
-    );
+    // TODO: I don't like having the curly bracket check being part of this. 
+    // Ideally the assembler would start assembling a block whenever it encounters a curly brace.
+    match self.next_token().unwrap(){
+      Token { kind:TokenKind::LCurlyBracket, .. } => {},
+      other => panic!("Block must begin with {{ not {} {}", other.kind, other.span.start)
+    }
+
+    // Enter a new scope 
+    self.table.enter_scope();
+
     // Create the block to be compiled
     while let Some(_,) =  self.next_token() {
       if self.current_instruction.kind == TokenKind::RCurlyBracket {
@@ -718,5 +646,8 @@ impl<'tcx,> Compiler<'tcx,> {
       }
       self.compile_current_instruction()
     }
+
+    // Exit the scope
+    self.table.exit_scope();
   }
 }
