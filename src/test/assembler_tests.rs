@@ -1441,6 +1441,41 @@ fn load_and_run_assembled_script() {
   assert_eq!(vm.reg()[4].as_f32(), foo(5.4, 13.222));
 }
 
+#[test]
+#[rustfmt::skip]
+fn compile_array(){
+  // TODO: Need to make it so an array can be stored in a register or variable
+  let p = Compiler::new("[5, 10, 15,]", stdout()).compile();
+
+  // Load R R []
+  // Var []
+  
+
+  // Get the variables 
+  let size = 3u32.to_le_bytes();
+  let slab = FIRST_FREE_REGISTER as u8;
+  let len = FIRST_FREE_REGISTER as u8 + 1;
+  let temp = FIRST_FREE_REGISTER as u8 + 2;
+  let num_5 = 5.0f32.to_le_bytes();
+  let num_10 =  10.0f32.to_le_bytes();
+  let num_15 =  15.0f32.to_le_bytes();
+  
+  let expected = [
+    OpCode::Jmp.into(), 5, 0, 0, 0, // main starts at 5
+    OpCode::Load.into(), len, size[0], size[1], size[2], size[3],
+    OpCode::Alloc.into(), slab, len,
+    OpCode::Load.into(), temp, num_5[0], num_5[1], num_5[2], num_5[3],
+    OpCode::WMem.into(), slab, temp, 0, 0, 0, 0, 0, // First has no offset
+    OpCode::Load.into(), temp, num_10[0], num_10[1], num_10[2], num_10[3],
+    OpCode::WMem.into(), slab, temp, 1, 0, 0, 0, 0, // Second is offset by 1
+    OpCode::Load.into(), temp, num_15[0], num_15[1], num_15[2], num_15[3],
+    OpCode::WMem.into(), slab, temp, 2, 0, 0, 0, 0, // Third is offset by 2
+    OpCode::Hlt.into()
+  ];  
+
+  assert_eq!(p.as_slice(), expected);
+}
+
 // This always has to be at the end.
 // Because it has foo and bar in different orders and one run of the program
 // shares the same interner it messes up the interned strings for every other

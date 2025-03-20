@@ -48,6 +48,10 @@ pub enum ASMError<'e,> {
   InvalidMathArgs {
     operation:Token, arg1:Token, arg2:Token,
   },
+  #[error("\x1b[93mINVALID ARRAY ENTRY:\x1b[0m {} {} is not a valid entry for an array of type {}.", token.kind, token.span.start, array_type)]
+  InvalidArrayEntry { token:Token, array_type:&'e str, },
+  #[error("\x1b[93mMISSING COMMA:\x1b[0m Expected a comma between {} {} and {} {}", a.kind, a.span.start, b.kind, b.span.start)]
+  MissingComma { a:Token, b:Token, },
 }
 
 impl<'e,> ASMError<'e,> {
@@ -70,6 +74,11 @@ impl<'e,> ASMError<'e,> {
       ASMError::UnregistedSyscall { span, .. } => *span,
       ASMError::UndefinedFunction { span, .. } => *span,
       ASMError::InvalidMathArgs { operation, .. } => operation.span,
+      ASMError::InvalidArrayEntry { token, .. } => token.span,
+      ASMError::MissingComma { a, b, } => Span {
+        start:a.span.start,
+        end:b.span.end,
+      },
     }
   }
 }

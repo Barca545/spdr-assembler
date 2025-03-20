@@ -60,9 +60,8 @@ struct Compiler<'tcx,> {
   table:SymbolTable,
   function_patches:HashMap<u32,Patch>,
   open:u8,
-  /// The body of the binary's "`main`" function.
+  /// The result of assemblin the source code.
   main:Program,
-
   _str:&'tcx str,
 }
 impl<'tcx,> Compiler<'tcx,> {
@@ -96,9 +95,19 @@ impl<'tcx,> Compiler<'tcx,> {
     token
   }
 
-  fn peek(&self)-> Option<Token>{
+  fn peek(&self) -> Option<Token>{
     if self.cursor < self.tokens.len(){
       Some(self.tokens[self.cursor])
+    }
+    else{
+      None
+    }
+  }
+
+  /// Look ahead in the array an arbitrary amount.
+  fn lookahead(&self, n:usize) -> Option<Token> {
+    if self.cursor < self.tokens.len(){
+      Some(self.tokens[self.cursor + n])
     }
     else{
       None
@@ -316,7 +325,6 @@ impl<'tcx,> Compiler<'tcx,> {
       }
       // Consume 4 tokens
       TokenKind::Wmem | TokenKind::Rmem => self.eat_tokens(4,),
-
       // Special conditions for consuming
       TokenKind::Loop => self.eat_block(),
       TokenKind::While | TokenKind::If => {
@@ -347,6 +355,10 @@ impl<'tcx,> Compiler<'tcx,> {
           _ => {}
         };
       }
+      TokenKind::LBracket => {
+        // Eat all tokens until a right bracket is encountered
+        while self.next_token().unwrap().kind != TokenKind::RBracket{}
+      },
       _ => panic!(
         "{}",
         ASMError::NotAnOpcode{ token: self.current_instruction }
@@ -363,6 +375,24 @@ impl<'tcx,> Compiler<'tcx,> {
     match instruction.kind {
       TokenKind::Load => {
         let reg = self.next_token_as_register();
+
+        // Check if this is loading an array 
+        // Confirm the next token is a reg
+        // confirm the token after is the beginning of an
+        // if one of these conditions isn't satisfied error
+        match (self.peek().unwrap(), self.lookahead(2).unwrap()) {
+          (Token { kind: TokenKind::Register(reg), .. }, 
+          Token { kind: TokenKind::RBracket, .. }) => {
+            // Load the slab into the first register 
+            // Load the len into the second register 
+            // Compile the array
+            todo!("handle arrays")
+          }
+          other => {
+            todo!("handle arrays")
+          }
+        }
+      
 
         // Get the immediate as an array and generate the instruction
         let val = self.next_token_as_immediate_array();
@@ -597,6 +627,7 @@ impl<'tcx,> Compiler<'tcx,> {
         };
         self.main.extend_from_slice(&[ OpCode::Ret.into(), pop_number,],);
       }
+      TokenKind::LBracket => self.compile_array(),
       TokenKind::Eof => {}
       _ => panic!(
         "{}",

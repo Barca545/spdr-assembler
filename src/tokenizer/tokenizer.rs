@@ -108,6 +108,16 @@ impl Lexer {
       },);
     }
 
+    // Eat string: If an " is observed, add the next characters as chars until the
+    // next " is encountered
+    if self.current_char == '"' {
+      let (str, span,) = self.eat_while(|ch| ch != '"',);
+      return Ok(Token {
+        kind:TokenKind::String(intern(&str,),),
+        span,
+      },);
+    }
+
     // Determine if the character is a single
     let tokenkind = match self.current_char {
       // Check against single char operators
@@ -116,6 +126,7 @@ impl Lexer {
       '}' => Some(TokenKind::RCurlyBracket,),
       '[' => Some(TokenKind::LBracket,),
       ']' => Some(TokenKind::RBracket,),
+      ',' => Some(TokenKind::Comma,),
       // Catch a raw register declaration
       '$' => return self.tokenize_register(),
       _ => None,
@@ -250,7 +261,6 @@ impl Lexer {
     // If this point is reached throw an error
     // Eat until whitespace is encountered. This is the error token.
     let (token, span,) = self.eat_while(|ch| !ch.is_whitespace(),);
-    dbg!(&token);
     // self.eat_current();
     Err(ASMError::UnrecognizedToken { token, span, }.into(),)
   }

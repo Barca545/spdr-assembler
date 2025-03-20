@@ -1,3 +1,4 @@
+use std::mem;
 use crate::patch::Patch;
 use crate::{assembler_errors::ASMError, Compiler, Token, TokenKind};
 use spdr_isa::opcodes::{CmpFlag, OpCode};
@@ -325,8 +326,6 @@ impl<'tcx,> Compiler<'tcx,> {
 
   }
 
-  
-
   /// Compiles the current comparison expression and returns the  [`Program`].
   pub(super) fn compile_cond_expr(&mut self,) -> Program {
     let op = self.next_token().unwrap();
@@ -484,4 +483,92 @@ impl<'tcx,> Compiler<'tcx,> {
     patch.patch(&mut self.main);
   }
 
+  /// Compiles an array by eating tokens until a closing bracket is found and allocating space for them on the heap.
+  pub(super) fn compile_array(&mut self){
+    // Create a vec to store array entries
+    let mut entries = Vec::new();
+
+    // Store the first item in the array
+    match self.next_token().unwrap() {
+      token @ Token { kind:TokenKind::Num(_), .. } 
+      | token @ Token { kind:TokenKind::Bool(_), .. } => {
+        entries.push(token);
+
+        // Check for the comma or closing bracket
+        // Just consume them the function below the loop will catch it
+        match self.next_token().unwrap() {
+          // Stop assembling the array if a right bracket is encountered
+          Token { kind:TokenKind::RBracket, .. }
+          // Keep assembling the array if a comma is encountered
+          | Token { kind:TokenKind::Comma, .. } => {},
+          // Error if not a comma or the end of the array
+          next => panic!("{}", ASMError::MissingComma { a:token , b:next })
+        }
+      },
+      other => panic!("Cannot store {} {} in an array", other.kind, other.span.start)
+    }
+
+    while mem::discriminant(&self.peek().unwrap().kind) == mem::discriminant(&entries[0].kind) {
+      let token = self.next_token().unwrap();
+      entries.push(token);
+
+      // Check for the comma
+      match self.next_token().unwrap() {
+        // Stop assembling the array if a right bracket is encountered
+        Token { kind:TokenKind::RBracket, .. } => break,
+        // Keep assembling the array if a comma is encountered
+        Token { kind:TokenKind::Comma, .. } => continue,
+        // Error if not a comma or the end of the array
+        next => panic!("{}", ASMError::MissingComma { a:token , b:next })
+      }
+    }
+
+    // This is only reached if the array has ended or an unexpected type was encountered
+    match self.next_token().unwrap(){
+      // Stop assembling the array if a right bracket is encountered
+      Token { kind:TokenKind::RBracket, .. } => {},
+      // This branch is only reached if there is a some kinda incorrect token in the array
+      other => panic!("{}", ASMError::InvalidArrayEntry { token: other, array_type: "NUM" } )
+    }
+
+    // Check the number of items in the vec to see how much to allocate
+    // TODO: Confirm ALLOC expects a u32 not an f32
+    let size = (entries.len() as u32).to_le_bytes();
+
+    // Reserve a register for the Slab and a register for the len
+    let slab = self.reserve_reg();
+    let len = self.reserve_reg();
+
+        // TODO: Create opcodes to allocate immediately to memory without needing to go through a register
+    // Allocate the slab and load the len into memory
+    self.main.extend_from_slice(&[
+      // Store the len first so we can use that for the allocation
+      OpCode::Load.into(), len, size[0], size[1], size[2], size[3],
+      OpCode::Alloc.into(), slab, len,
+    ]);
+
+    // TODO: Create opcodes to write immediately to memory without needing to go through a register
+    // Generate instructions to load values into memory
+    // Create a temporary register to store the offset in
+    let temp = self.reserve_reg();
+    for (i, entry) in entries.iter().enumerate() {
+      let bytes = match entry.kind {
+        TokenKind::Bool(boolean) => (boolean as u32).to_le_bytes(),
+        TokenKind::Num(num) => num.to_le_bytes(),
+        _=> unreachable!()
+      };
+
+      let idx = (i as u32).to_le_bytes();
+
+      self.main.extend_from_slice(&[
+        // First have to load the value into a register
+        OpCode::Load.into(), temp, bytes[0], bytes[1], bytes[2], bytes[3],
+        // Then write it into the array
+        OpCode::WMem.into(), slab, temp, idx[0], idx[1], idx[2], idx[3], 0,
+      ])
+    }
+  }
+
+  // strings should be compiled...somehow else...
+  // Maybe they can be stored in the section with the functions
 }
