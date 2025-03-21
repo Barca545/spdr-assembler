@@ -4,7 +4,7 @@ use std::{
 };
 
 #[derive(Debug, Clone,)]
-// Name and path are optional because the input may not be a file. (such as with
+// Path is optional because the input may not be a file. (such as with
 // tests or IDE commands)
 pub struct SourceFile {
   src:String,
@@ -35,6 +35,7 @@ impl SourceFile {
     &self.src
   }
 
+  /// Returns the path.
   pub fn path(&self,) -> &Option<PathBuf,> {
     &self.path
   }
