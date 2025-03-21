@@ -1,4 +1,4 @@
-use crate::{assembler_errors::ASMError, interner::lookup};
+use crate::{errors::ASMError, interner::lookup};
 use eyre::Result;
 use std::fmt::{Debug, Display};
 
@@ -67,6 +67,7 @@ pub enum TokenKind {
   Not,
   Jmp,
   Jnz,
+  Jz,
   Call,
   SysCall,
   Wmem,
@@ -122,6 +123,7 @@ impl Display for TokenKind {
       Self::In => write!(f, "In"),
       Self::Jmp => write!(f, "Jmp"),
       Self::Jnz => write!(f, "Jnz"),
+      Self::Jz => write!(f, "Jz"),
       Self::Call => write!(f, "Call"),
       Self::SysCall => write!(f, "SysCall"),
       Self::Ret => write!(f, "Ret"),

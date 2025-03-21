@@ -41,6 +41,10 @@ IF GT $15 14 {
   NOOP
   NOOP
 }
+Jmp 1
+Jnz $5 1
+Jz $5 1
+
 FN bar {
   SUB $13 15 $90
   RET 3

@@ -1,30 +1,28 @@
 use super::{Location, Span, Token, TokenKind};
-use crate::{assembler_errors::ASMError, error_printing::print_error, interner::intern};
+use crate::{
+  errors::{ASMError, ErrorPrinter},
+  interner::intern,
+  src_file::SourceFile,
+};
 use eyre::Result;
 use std::io::Write;
 
 // Refactor:
 // - See if the next_char_satisfies => eat_current sequence could be one
 //   function
-// - Turn panics into errors
-// - Add error printing/handling
-// - Test error handling
-// - Update tokens
 // - Currently the tokenizer does not work if there is a space at the beginning
 //   of the file because eat_while does not run if the current token is Null
-// - For mono tokens currently their creation must be follow with
+// - For mono tokens currently their creation must be followed with
 //   self.eat_current() so the next character is a character and not white
 //   space. This feels brittle but without it an infinite loop occurs, I am
 //   unclear why
-// - Catching a raw register should error if the declared register is a reserved
-//   reg
-// - Not sure I need Jz Jmp and Jnz tokens
 
 /// String terminator
 const NULL_CHAR:char = '\0';
 
-pub(crate) struct Lexer {
-  pub(crate) src:Vec<char,>,
+pub(crate) struct Lexer<'tcx,> {
+  source:&'tcx SourceFile,
+  pub(crate) chars:Vec<char,>,
   /// The current index the in `src` the Lexer is reading.
   pub(crate) current_char:char,
   pub(crate) current:usize,
@@ -36,15 +34,16 @@ pub(crate) struct Lexer {
   pub(crate) col:usize,
 }
 
-impl Lexer {
-  pub(crate) fn new(src:&str,) -> Self {
-    let mut src = src.chars().into_iter().collect::<Vec<char,>>();
+impl<'tcx,> Lexer<'tcx,> {
+  pub(crate) fn new(src:&'tcx SourceFile,) -> Self {
+    let mut chars = src.source_str().chars().into_iter().collect::<Vec<char,>>();
     // Add a terminator to the end of the input
-    src.push(NULL_CHAR,);
-    let current_char = src[0];
+    chars.push(NULL_CHAR,);
+    let current_char = chars[0];
 
     Lexer {
-      src,
+      source:src,
+      chars,
       current_char,
       current:0,
       next:1,
@@ -56,8 +55,8 @@ impl Lexer {
   /// Returns the next char in the `src`.
   #[inline(always)]
   fn peek_next_char(&self,) -> Option<char,> {
-    if self.next < self.src.len() {
-      Some(self.src[self.next],)
+    if self.next < self.chars.len() {
+      Some(self.chars[self.next],)
     }
     else {
       None
@@ -79,7 +78,7 @@ impl Lexer {
     // Update current_char, current, and next
     self.current = self.next;
     self.next += 1;
-    self.current_char = self.src[self.current];
+    self.current_char = self.chars[self.current];
   }
 
   /// If the current char is a '$' parses the numbers following it as a
@@ -139,6 +138,7 @@ impl Lexer {
       let (wrd, mut span,) = self.eat_while(|ch| ch.is_alphabetic() || ":_".contains(ch,),);
       // Catch labels by checking ends with :
       if wrd.ends_with(':',) {
+        // Label must contain the index it refrences not just(?) the string
         let kind = TokenKind::Label(intern(&wrd[0..wrd.len() - 1],),);
         span.end.idx = span.end.idx - 1;
         span.end.col = span.end.col - 1;
@@ -170,6 +170,7 @@ impl Lexer {
         "FALSE" => TokenKind::Bool(false,),
         "JMP" => TokenKind::Jmp,
         "JNZ" => TokenKind::Jnz,
+        "JZ" => TokenKind::Jz,
         "CALL" => TokenKind::Call,
         "SYSCALL" => TokenKind::SysCall,
         "RET" => TokenKind::Ret,
@@ -264,7 +265,7 @@ impl Lexer {
     // Location of the last character in the string created by this function
     let mut end = self.loc();
 
-    while self.current_char != NULL_CHAR && predicate(self.src[self.current],) {
+    while self.current_char != NULL_CHAR && predicate(self.chars[self.current],) {
       // The end of the span is updated each time we loop. Comes before because
       // `eat_current` sents the current token to what is `next` at this point
       end = self.loc();
@@ -272,7 +273,7 @@ impl Lexer {
     }
 
     (
-      self.src[start.idx as usize..=end.idx as usize].iter().collect(),
+      self.chars[start.idx as usize..=end.idx as usize].iter().collect(),
       Span { start, end, },
     )
   }
@@ -321,9 +322,8 @@ impl Lexer {
     }
 
     for err in errs {
-      let src = String::from_iter(&self.src,);
       let err = err.downcast::<ASMError>().unwrap();
-      print_error(&mut w, &src, err,);
+      ErrorPrinter::print(&mut w, self.source, err,);
     }
 
     tokens

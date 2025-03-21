@@ -1,4 +1,4 @@
-use crate::{symbol_table::SymbolTable, Ty, VarDecl};
+use crate::symbol_table::{SymbolTable, Ty, VarDecl};
 
 // Test the lookup will keep searching until the symbol is found or the top is
 // reached

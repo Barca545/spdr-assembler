@@ -1,4 +1,7 @@
-use crate::{symbol_table::Ty, tokenizer::TokenKind, Span, Token};
+use crate::{
+  symbol_table::Ty,
+  tokenizer::{Span, Token, TokenKind},
+};
 use thiserror::Error;
 
 #[derive(Debug, Error,)]
@@ -36,8 +39,8 @@ pub enum ASMError<'e,> {
   NotEquality(TokenKind,),
   #[error("\x1b[93mNOT FUNCTION:\x1b[0m Expected identity to be a function; {0} is not a function.")]
   NotFunction(Ty,),
-  #[error("\x1b[93mUNAVAILABLE FUNCTION NAME:\x1b[0m The name {0} is already in use.")]
-  UnavailableFunctionName(&'e str,),
+  #[error("\x1b[93mUNAVAILABLE FUNCTION NAME:\x1b[0m The name {name} {} is already in use.", span.start)]
+  UnavailableFunctionName { name:&'e str, span:Span, },
   #[error("\x1b[93mUNDEFINED FUNCTION:\x1b[0m Cannot use {name} {} without defining it.", span.start)]
   UndefinedFunction { name:&'e str, span:Span, },
   #[error(
@@ -48,6 +51,8 @@ pub enum ASMError<'e,> {
   InvalidMathArgs {
     operation:Token, arg1:Token, arg2:Token,
   },
+  #[error("{} {} is not a Label or Index", target, span.start)]
+  InvalidJumpTarget { target:&'e str, span:Span, },
 }
 
 impl<'e,> ASMError<'e,> {
@@ -66,10 +71,11 @@ impl<'e,> ASMError<'e,> {
       ASMError::NotRange { token, } => token.span,
       ASMError::NotEquality(..,) => todo!(),
       ASMError::NotFunction(..,) => todo!(),
-      ASMError::UnavailableFunctionName(_,) => todo!(),
+      ASMError::UnavailableFunctionName { span, .. } => *span,
       ASMError::UnregistedSyscall { span, .. } => *span,
       ASMError::UndefinedFunction { span, .. } => *span,
       ASMError::InvalidMathArgs { operation, .. } => operation.span,
+      ASMError::InvalidJumpTarget { span, .. } => *span,
     }
   }
 }

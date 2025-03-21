@@ -1,7 +1,7 @@
-use crate::Lexer;
 use crate::{
   interner::intern,
-  tokenizer::{Location, Span, Token, TokenKind},
+  src_file::SourceFile,
+  tokenizer::{Lexer, Location, Span, Token, TokenKind},
 };
 use std::io;
 
@@ -10,17 +10,20 @@ fn test_skip_whitespace() {
   let src = "
       var test = 18
     ";
-  let mut lexer = Lexer::new(src,);
+  let source = &SourceFile::new_from_raw(src,);
+  let mut lexer = Lexer::new(source,);
+
   lexer.skip_whitespace();
 
-  assert_eq!(lexer.src[lexer.current], 'v');
+  assert_eq!(lexer.chars[lexer.current], 'v');
 }
 
 #[test]
 fn test_eat_while() {
   let src = "var 90 }";
 
-  let mut lex = Lexer::new(src,);
+  let source = &SourceFile::new_from_raw(src,);
+  let mut lex = Lexer::new(source,);
 
   let (wrd, span,) = lex.eat_while(|ch| ch.is_alphanumeric(),);
 
@@ -44,7 +47,8 @@ fn test_eat_while() {
 fn test_next_token() {
   let src = "var";
 
-  let mut lex = Lexer::new(src,);
+  let source = &SourceFile::new_from_raw(src,);
+  let mut lex = Lexer::new(source,);
 
   let token = lex.next_token().unwrap();
 
@@ -63,7 +67,8 @@ fn test_next_token() {
 #[test]
 fn test_register_annotation() {
   let src = "$15";
-  let tokens = Lexer::new(src,).tokenize(io::stdout(),);
+  let source = &SourceFile::new_from_raw(src,);
+  let tokens = Lexer::new(source,).tokenize(io::stdout(),);
   assert_eq!(tokens[0].kind, TokenKind::Register(15));
 }
 
@@ -71,7 +76,8 @@ fn test_register_annotation() {
 fn test_comments() {
   let src = "// 15, 98, 70 \r\n70";
 
-  let tokens = Lexer::new(src,).tokenize(io::stdout(),);
+  let source = &SourceFile::new_from_raw(src,);
+  let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens.len(), 2);
   assert_eq!(tokens[0].kind, TokenKind::Num(70.0));
@@ -82,8 +88,8 @@ fn test_comments() {
 fn test_range() {
   let src = "0..5 0..=17";
 
-  let mut lex = Lexer::new(src,);
-  let tokens = lex.tokenize(io::stdout(),);
+  let source = &SourceFile::new_from_raw(src,);
+  let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Range { start:0, end:4 });
   assert_eq!(tokens[0].span, Span::new([0, 1, 1], [3, 1, 4]));
@@ -96,7 +102,8 @@ fn test_range() {
 fn test_numbers() {
   let src = "97.65 5.6";
 
-  let tokens = Lexer::new(src,).tokenize(io::stdout(),);
+  let source = &SourceFile::new_from_raw(src,);
+  let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Num(97.65));
   assert_eq!(tokens[0].span, Span::new([0, 1, 1], [4, 1, 5]));
@@ -109,8 +116,8 @@ fn test_numbers() {
 fn test_labels() {
   let src = "label_test:";
 
-  let mut lex = Lexer::new(src,);
-  let tokens = lex.tokenize(io::stdout(),);
+  let source = &SourceFile::new_from_raw(src,);
+  let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Label(intern("label_test")));
   assert_eq!(tokens[0].span, Span::new([0, 1, 1], [9, 1, 10]))
@@ -120,9 +127,8 @@ fn test_labels() {
 fn test_tokenize() {
   let src = include_str!("../test/test_tokens.spdr");
 
-  let mut lex = Lexer::new(src,);
-
-  let tokens = lex.tokenize(io::stdout(),);
+  let source = &SourceFile::new_from_raw(src,);
+  let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Var);
   assert_eq!(tokens[0].span, Span::new([0, 1, 1], [2, 1, 3]));
@@ -194,7 +200,8 @@ fn test_tokenize() {
 #[test]
 fn tokenizer_errors_print() {
   let src = include_str!("../../src/test/spdr_error_test.spdr");
-  let mut lex = Lexer::new(src,);
+  let source = &SourceFile::new_from_raw(src,);
+  let mut lex = Lexer::new(source,);
   let mut out = Vec::new();
   let _ = lex.tokenize(&mut out,);
 

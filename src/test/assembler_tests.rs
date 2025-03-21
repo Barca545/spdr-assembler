@@ -1,4 +1,8 @@
-use crate::{interner::intern, symbol_table::Ty, Compiler, VarDecl};
+use crate::{
+  interner::intern,
+  symbol_table::{Ty, VarDecl},
+  Assembler,
+};
 use spdr_isa::{
   opcodes::{CmpFlag, OpCode},
   program::Program,
@@ -13,16 +17,16 @@ use std::{
 
 #[test]
 fn load_header() {
-  let mut compiler = Compiler::new("", io::stdout(),);
-  compiler.read_header(PathBuf::from("../spdr-assembler/src/test/test_header.hd",),);
+  let mut assembler = Assembler::new("", io::stdout(),);
+  assembler.read_header(PathBuf::from("../spdr-assembler/src/test/test_header.hd",),);
 
-  let decl_1 = match compiler.table.lookup(&intern("foo",),).unwrap().ty {
+  let decl_1 = match assembler.table().lookup(&intern("foo",),).unwrap().ty {
     Ty::ExternalFunction(idx,) => idx,
     _ => panic!(),
   };
   assert_eq!(decl_1, 0);
 
-  let decl_2 = match compiler.table.lookup(&intern("bar",),).unwrap().ty {
+  let decl_2 = match assembler.table().lookup(&intern("bar",),).unwrap().ty {
     Ty::ExternalFunction(idx,) => idx,
     _ => panic!(),
   };
@@ -32,7 +36,7 @@ fn load_header() {
 #[test]
 #[rustfmt::skip]
 fn entering_and_exiting_scope_works() {
-  let p = Compiler::new("VAR foo 15 FN bar {VAR foo 13 ADD foo foo 1 RET 0}", stdout(),).compile();
+  let p = Assembler::new("VAR foo 15 FN bar {VAR foo 13 ADD foo foo 1 RET 0}", stdout(),).compile();
 
   // Because functions compile first, this is the first variable which will be picked up
   let foo1 = FIRST_FREE_REGISTER as u8;
@@ -58,16 +62,9 @@ fn entering_and_exiting_scope_works() {
 }
 
 #[test]
-fn eat_instruction_works() {
-  let src = include_str!("./full_compilation_test.spdr");
-  let p = Compiler::new(src, io::stdout(),).eat_compile();
-  assert_eq!(p.as_slice(), []);
-}
-
-#[test]
 #[rustfmt::skip]
-fn compile_load_cpy() {
-  let p = Compiler::new("Load $14 1 Copy $15 $12",io::stdout()).compile();
+fn assemble_load_cpy() {
+  let p = Assembler::new("Load $14 1 Copy $15 $12",io::stdout()).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -84,7 +81,7 @@ fn compile_load_cpy() {
 #[test]
 #[rustfmt::skip]
 fn var_works_in_asm() {
-  let p = Compiler::new("VAR foo 15 VAR bar 60 ADD foo foo 30 ADD foo foo bar FN test {}", io::stdout(),).compile();
+  let p = Assembler::new("VAR foo 15 VAR bar 60 ADD foo foo 30 ADD foo foo bar FN test {}", io::stdout(),).compile();
 
   let num_15 = 15.0f32.to_le_bytes();
   let num_60 = 60.0f32.to_le_bytes();
@@ -110,8 +107,8 @@ fn var_works_in_asm() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_memcpy_rmem_wmem() {
-  let p = Compiler::new("wmem $14 $15 1 $16 memcpy $55 $50 rmem $255 $40 1 $20",io::stdout()).compile();
+fn assemble_memcpy_rmem_wmem() {
+  let p = Assembler::new("wmem $14 $15 1 $16 memcpy $55 $50 rmem $255 $40 1 $20",io::stdout()).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -128,8 +125,8 @@ fn compile_memcpy_rmem_wmem() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_alloc_dealloc() {
-  let p = Compiler::new("Alloc $14 $90 Dealloc", io::stdout()).compile();
+fn assemble_alloc_dealloc() {
+  let p = Assembler::new("Alloc $14 $90 Dealloc", io::stdout()).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -145,9 +142,9 @@ fn compile_alloc_dealloc() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_arith() {
+fn assemble_arith() {
   // ADDII
-  let p = Compiler::new("ADD $14 15 10", io::stdout(),).compile();
+  let p = Assembler::new("ADD $14 15 10", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -160,7 +157,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // ADDRI
-  let p = Compiler::new("ADD $14 $15 10", io::stdout(),).compile();
+  let p = Assembler::new("ADD $14 $15 10", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -173,7 +170,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // ADDRR
-  let p = Compiler::new("ADD $14 $14 $15", io::stdout(),).compile();
+  let p = Assembler::new("ADD $14 $14 $15", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -186,7 +183,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // SUBII
-  let p = Compiler::new("SUB $14 10 30", io::stdout(),).compile();
+  let p = Assembler::new("SUB $14 10 30", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -199,7 +196,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // SUBIR
-  let p = Compiler::new("SUB $15 90 $14", io::stdout(),).compile();
+  let p = Assembler::new("SUB $15 90 $14", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -212,7 +209,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // SUBRI
-  let p = Compiler::new("SUB $15 $14 90", io::stdout(),).compile();
+  let p = Assembler::new("SUB $15 $14 90", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -225,7 +222,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // SUBRR
-  let p = Compiler::new("SUB $15 $14 $14", io::stdout(),).compile();
+  let p = Assembler::new("SUB $15 $14 $14", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -238,7 +235,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // MULII
-  let p = Compiler::new("MUL $14 10 29.32", io::stdout(),).compile();
+  let p = Assembler::new("MUL $14 10 29.32", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -251,7 +248,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // MULRI
-  let p = Compiler::new("MUL $15 $14 10", io::stdout(),).compile();
+  let p = Assembler::new("MUL $15 $14 10", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -264,7 +261,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // MULRR
-  let p = Compiler::new("MUL $15 $14 $14", io::stdout(),).compile();
+  let p = Assembler::new("MUL $15 $14 $14", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -277,7 +274,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // DIVII
-  let p = Compiler::new("DIV $14 32.54 653", io::stdout(),).compile();
+  let p = Assembler::new("DIV $14 32.54 653", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -290,7 +287,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // DIVRI
-  let p = Compiler::new("DIV $15 $14 90", io::stdout(),).compile();
+  let p = Assembler::new("DIV $15 $14 90", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -303,7 +300,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // DIVIR
-  let p = Compiler::new("DIV $15 90 $14", io::stdout(),).compile();
+  let p = Assembler::new("DIV $15 90 $14", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -316,7 +313,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // DIVRR
-  let p = Compiler::new("DIV $15 $14 $14", io::stdout(),).compile();
+  let p = Assembler::new("DIV $15 $14 $14", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -329,7 +326,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // POWII
-  let p = Compiler::new("POW $14 76.253216 3.7", io::stdout(),).compile();
+  let p = Assembler::new("POW $14 76.253216 3.7", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -342,7 +339,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // POWRI
-  let p = Compiler::new("POW $15 $14 90", io::stdout(),).compile();
+  let p = Assembler::new("POW $15 $14 90", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -355,7 +352,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // POWIR
-  let p = Compiler::new("POW $15 90 $14", io::stdout(),).compile();
+  let p = Assembler::new("POW $15 90 $14", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -368,7 +365,7 @@ fn compile_arith() {
   assert_eq!(p.as_slice(), expected);
 
   // PowRR
-  let p = Compiler::new("POW $15 $14 $14", io::stdout(),).compile();
+  let p = Assembler::new("POW $15 $14 $14", io::stdout(),).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -383,10 +380,10 @@ fn compile_arith() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_loop() {
+fn assemble_loop() {
   // Test plain loop compilation
-  let mut c = Compiler::new("Loop {ADD $14 $30 1}", io::stdout());
-  let p = c.compile();
+  let mut a = Assembler::new("Loop {ADD $14 $30 1}", io::stdout());
+  let p = a.compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -401,8 +398,8 @@ fn compile_loop() {
   assert_eq!(p.as_slice(), expected);
 
   // Test plain loop compilation with function at beginning
-  let mut c = Compiler::new("Loop {ADD $14 $30 1} FN foo {SUB $16 $94 $233 RET 1}", io::stdout());
-  let p = c.compile();
+  let mut a = Assembler::new("Loop {ADD $14 $30 1} FN foo {SUB $16 $94 $233 RET 1}", io::stdout());
+  let p = a.compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -421,10 +418,10 @@ fn compile_loop() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_while_loop(){
+fn assemble_while_loop(){
   // Test while loop compilation when `true`
-  let mut c = Compiler::new("while true {noop noop noop}",io::stdout());
-  let p = c.compile();
+  let mut a = Assembler::new("while true {noop noop noop}",io::stdout());
+  let p = a.compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -441,7 +438,7 @@ fn compile_while_loop(){
   assert_eq!(p.as_slice(), expected);
 
   // Test While loop compilation when `false`
-  let p = Compiler::new("while false {noop noop noop}", io::stdout()).compile();
+  let p = Assembler::new("while false {noop noop noop}", io::stdout()).compile();
   
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -453,8 +450,8 @@ fn compile_while_loop(){
   assert_eq!(p.as_slice(), expected);
 
   // Test While loop compilation with real condition
-  let mut c = Compiler::new("while EQ $15 1 {noop noop noop}", io::stdout());
-  let p = c.compile();
+  let mut a = Assembler::new("while EQ $15 1 {noop noop noop}", io::stdout());
+  let p = a.compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -472,8 +469,8 @@ fn compile_while_loop(){
   assert_eq!(p.as_slice(), expected);
 
   // Test While loop compiles when binary contains function
-  let mut c = Compiler::new("WHILE EQ $15 1 {ADD $15 $15 $54 } FN foo {NOOP NOOP}", io::stdout());
-  let p = c.compile();
+  let mut a = Assembler::new("WHILE EQ $15 1 {ADD $15 $15 $54 } FN foo {NOOP NOOP}", io::stdout());
+  let p = a.compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -495,10 +492,10 @@ fn compile_while_loop(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_for_loop(){
+fn assemble_for_loop(){
   // Test For loop compilation
-  let mut c = Compiler::new("for i in 0..9 {noop noop noop}", io::stdout());
-  let p = c.compile();   
+  let mut a = Assembler::new("for i in 0..9 {noop noop noop}", io::stdout());
+  let p = a.compile();   
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -518,8 +515,8 @@ fn compile_for_loop(){
   assert_eq!(p.as_slice(), expected);
 
   // Test for loop compiles when binary has function
-  let mut c = Compiler::new("FOR i IN 0..9 {NOOP NOOP NOOP} FN foo {NOOP NOOP}", io::stdout());
-  let p = c.compile(); 
+  let mut a = Assembler::new("FOR i IN 0..9 {NOOP NOOP NOOP} FN foo {NOOP NOOP}", io::stdout());
+  let p = a.compile(); 
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p); 
@@ -546,10 +543,10 @@ fn compile_for_loop(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_if_else() {
+fn assemble_if_else() {
   // Compile IF with boolean true check
   // Compile ELSE
-  let p = Compiler::new("IF true {Noop Noop Noop Noop} else {Add $15 0 1} Mul $16 1 1", io::stdout()).compile();
+  let p = Assembler::new("IF true {Noop Noop Noop Noop} else {Add $15 0 1} Mul $16 1 1", io::stdout()).compile();
   
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -567,7 +564,7 @@ fn compile_if_else() {
   assert_eq!(p.as_slice(), expected);
 
   // Compile IF with boolean false check
-  let p = Compiler::new("IF false {mul $54 0 1 } else {add $26 $17 1} add $46 0 1", io::stdout()).compile();
+  let p = Assembler::new("IF false {mul $54 0 1 } else {add $26 $17 1} add $46 0 1", io::stdout()).compile();
   
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&p);
@@ -586,43 +583,41 @@ fn compile_if_else() {
 
   // Compile IF with runtime check
   // Compile ELSE IF
-  let p = Compiler::new(
+  let p = Assembler::new(
     "IF EQ $14 0 {Noop Noop Noop Noop} Else If GT $15 1 {add $26 0 1 Noop Noop Noop} Mul $14 $14 1 ",
     io::stdout())
   .compile();
   // If is failing likely because it is placing the jump location after the else
-
-  assert_eq!(
-    p.as_slice(),
-    [
-      OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
-      // IF expression
-      OpCode::CmpRI.into(), CmpFlag::Eq.into(), 14, 0, 0, 0, 0,
-      OpCode::Jz.into(), EQ as u8, 22, 0, 0, 0, // Jump to idx 22 if the comparison fails
-      OpCode::Noop.into(),
-      OpCode::Noop.into(),
-      OpCode::Noop.into(),
-      OpCode::Noop.into(),
-      // ELSE IF expression
-      OpCode::CmpRI.into(), CmpFlag::Gt.into(), 15, 0, 0, 128, 63,
-      OpCode::Jz.into(), EQ as u8, 44, 0, 0, 0, // Jump to idx 44 if the comparison fails
-      OpCode::Load.into(), 26, 0, 0, 128, 63,
-      OpCode::Noop.into(),
-      OpCode::Noop.into(),
-      OpCode::Noop.into(),
-      OpCode::MulRI.into(), 14, 14, 0, 0, 128, 63,
-      OpCode::Hlt.into(),
-    ]
-  );
+  let expected =     [
+    OpCode::Jmp.into(), 5, 0, 0, 0, // `main` starts on 5
+    // IF expression
+    OpCode::CmpRI.into(), CmpFlag::Eq.into(), 14, 0, 0, 0, 0,
+    OpCode::Jz.into(), EQ as u8, 22, 0, 0, 0, // Jump to idx 22 if the comparison fails
+    OpCode::Noop.into(),
+    OpCode::Noop.into(),
+    OpCode::Noop.into(),
+    OpCode::Noop.into(),
+    // ELSE IF expression
+    OpCode::CmpRI.into(), CmpFlag::Gt.into(), 15, 0, 0, 128, 63,
+    OpCode::Jz.into(), EQ as u8, 44, 0, 0, 0, // Jump to idx 44 if the comparison fails
+    OpCode::Load.into(), 26, 0, 0, 128, 63,
+    OpCode::Noop.into(),
+    OpCode::Noop.into(),
+    OpCode::Noop.into(),
+    OpCode::MulRI.into(), 14, 14, 0, 0, 128, 63,
+    OpCode::Hlt.into(),
+  ];
+  
+  assert_eq!(p.as_slice(), expected);
 }
 
 #[test]
 #[rustfmt::skip]
-fn compile_when_single_function_defined(){
-  let mut c = Compiler::new("Sub $54 $34 $65 FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30", io::stdout());
-  let p = c.compile();
+fn assemble_when_single_function_defined(){
+  let mut a = Assembler::new("Sub $54 $34 $65 FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30", io::stdout());
+  let p = a.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.lookup(&intern("foo")){
+  match a.table().lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -649,11 +644,11 @@ fn compile_when_single_function_defined(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_call_when_single_function_defined_before_calling(){
-  let mut c = Compiler::new("Sub $54 $34 $65 fn foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30 CALL foo", io::stdout());
-  let p = c.compile();
+fn assemble_call_when_single_function_defined_before_calling(){
+  let mut a = Assembler::new("Sub $54 $34 $65 fn foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} Div $65 $58 $30 CALL foo", io::stdout());
+  let p = a.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.lookup(&intern("foo")){
+  match a.table().lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -681,11 +676,11 @@ fn compile_call_when_single_function_defined_before_calling(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_when_single_function_defined_after_call(){
-  let mut c = Compiler::new("CALL foo SUB $54 $34 $65 CALL foo FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
-  let p = c.compile();
+fn assemble_when_single_function_defined_after_call(){
+  let mut a = Assembler::new("CALL foo SUB $54 $34 $65 CALL foo FN foo {ADD $14 $14 $15 NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
+  let p = a.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.lookup(&intern("foo")){
+  match a.table().lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -714,11 +709,11 @@ fn compile_when_single_function_defined_after_call(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_when_single_function_contains_recursion(){
-  let mut c = Compiler::new("CALL foo FN foo {ADD $14 $14 $15 CALL foo NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
-  let p = c.compile();
+fn assemble_when_single_function_contains_recursion(){
+  let mut a = Assembler::new("CALL foo FN foo {ADD $14 $14 $15 CALL foo NOOP MUL $88 $87 $98 RET 0} DIV $65 $58 $30 CALL foo", io::stdout());
+  let p = a.compile();
   // Check the function pointer of `foo` is correct
-  match c.table.lookup(&intern("foo")){
+  match a.table().lookup(&intern("foo")){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -747,15 +742,15 @@ fn compile_when_single_function_contains_recursion(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_when_multiple_functions_defined(){
+fn assemble_when_multiple_functions_defined(){
   let src = "FN foo {ADD $14 $60 $37 RET 3} FN bar {POW $67 $64 $75 RET 2}";
-  let mut c = Compiler::new(src, io::stdout());
-  let p = c.compile();
+  let mut a = Assembler::new(src, io::stdout());
+  let p = a.compile();
 
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &0);
-  match c.table.lookup(foo_fn_idx){
+  match a.table().lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -763,7 +758,7 @@ fn compile_when_multiple_functions_defined(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &1);
-  match c.table.lookup(bar_fn_idx){
+  match a.table().lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -785,15 +780,15 @@ fn compile_when_multiple_functions_defined(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_call_when_multiple_functions_defined_before_calling(){
+fn assemble_call_when_multiple_functions_defined_before_calling(){
   let src = "FN foo {ADD $14 $60 $37 RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar";
-  let mut c = Compiler::new(src, io::stdout());
-  let p = c.compile();
+  let mut a = Assembler::new(src, io::stdout());
+  let p = a.compile();
   
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &0);
-  match c.table.lookup(foo_fn_idx){
+  match a.table().lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -801,7 +796,7 @@ fn compile_call_when_multiple_functions_defined_before_calling(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &1);
-  match c.table.lookup(bar_fn_idx){
+  match a.table().lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -827,14 +822,14 @@ fn compile_call_when_multiple_functions_defined_before_calling(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_when_multiple_functions_defined_after_call(){
-  let mut c = Compiler::new("CALL bar CALL foo FN foo {ADD $14 $60 $37 RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar", io::stdout());
-  let p = c.compile();
+fn assemble_when_multiple_functions_defined_after_call(){
+  let mut a = Assembler::new("CALL bar CALL foo FN foo {ADD $14 $60 $37 RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar", io::stdout());
+  let p = a.compile();
 
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &1);
-  match c.table.lookup(foo_fn_idx){
+  match a.table().lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -842,7 +837,7 @@ fn compile_when_multiple_functions_defined_after_call(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &0);
-  match c.table.lookup(bar_fn_idx){
+  match a.table().lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [11, 0, 0, 0]),
     _ => panic!("Should be a function pointer"),
   }
@@ -875,24 +870,24 @@ fn compile_when_multiple_functions_defined_after_call(){
 #[should_panic = "\x1b[93mUNAVAILABLE FUNCTION NAME:\x1b[0m The name foo is already in use."]
 fn function_errors_when_name_in_use() {
   // Test fuction name reuse fails
-  let _ = Compiler::new("FN foo {ADD $14 $14 4} FN foo {NOOP NOOP}", io::stdout(),).compile();
+  let _ = Assembler::new("FN foo {ADD $14 $14 4} FN foo {NOOP NOOP}", io::stdout(),).compile();
 }
 
 #[test]
 #[should_panic = "\x1b[93mUNDEFINED FUNCTION:\x1b[0m Cannot use foo (idx:5, ln:1, col:6) without defining it."]
 fn function_errors_when_not_defined() {
   // Test fuction name reuse fails
-  let _ = Compiler::new("CALL foo", io::stdout(),).compile();
+  let _ = Assembler::new("CALL foo", io::stdout(),).compile();
 }
 
 #[test]
 #[rustfmt::skip]
-fn compile_syscall() {   
-  let mut compiler = Compiler::new("syscall foo", io::stdout());
-  compiler
+fn assemble_syscall() {   
+  let mut assembler = Assembler::new("syscall foo", io::stdout());
+  assembler
     .read_header(PathBuf::from("../spdr-assembler/src/test/test_header.hd"),);
 
-  let p = compiler.compile();
+  let p = assembler.compile();
 
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
@@ -908,8 +903,8 @@ fn compile_syscall() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_push_pop() {
-  let p = Compiler::new("Push $1 Push $1 Pop PopR $16", io::stdout()).compile();
+fn assemble_push_pop() {
+  let p = Assembler::new("Push $1 Push $1 Pop PopR $16", io::stdout()).compile();
 
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
@@ -928,9 +923,9 @@ fn compile_push_pop() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_eq() {
+fn assemble_eq() {
   // EQII
-  let p = Compiler::new("eq 2 2", io::stdout()).compile();
+  let p = Assembler::new("eq 2 2", io::stdout()).compile();
 
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
@@ -944,7 +939,7 @@ fn compile_eq() {
   assert_eq!(p.as_slice(), expected);
 
   // EQIR
-  let p = Compiler::new("eq $14 1", io::stdout()).compile();
+  let p = Assembler::new("eq $14 1", io::stdout()).compile();
   
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
@@ -958,7 +953,7 @@ fn compile_eq() {
   assert_eq!(p.as_slice(), expected);
 
   // EQRR
-  let p = Compiler::new("eq $14 $15", io::stdout()).compile();
+  let p = Assembler::new("eq $14 $15", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRR.into(), CmpFlag::Eq.into(), 14, 15, 
@@ -973,9 +968,9 @@ fn compile_eq() {
 
 #[test]
 #[rustfmt::skip]
-fn compile_geq(){
+fn assemble_geq(){
   // GEQII
-  let p = Compiler::new("geq 4 2", io::stdout()).compile();
+  let p = Assembler::new("geq 4 2", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
@@ -988,7 +983,7 @@ fn compile_geq(){
   assert_eq!(p.as_slice(), expected);
 
   // GEQRI
-  let p = Compiler::new("geq $14 1", io::stdout()).compile();
+  let p = Assembler::new("geq $14 1", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRI.into(), CmpFlag::Geq.into(), 14, 0, 0, 128, 63, 
@@ -1001,7 +996,7 @@ fn compile_geq(){
   assert_eq!(p.as_slice(), expected);
 
   // GEQIR
-  let p = Compiler::new("geq 1 $14", io::stdout()).compile();
+  let p = Assembler::new("geq 1 $14", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRI.into(), CmpFlag::Geq.into(), 14, 0, 0, 128, 63,
@@ -1015,7 +1010,7 @@ fn compile_geq(){
   assert_eq!(p.as_slice(), expected);
 
   // GEQRR
-  let p = Compiler::new("geq $15 $14", io::stdout()).compile();
+  let p = Assembler::new("geq $15 $14", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRR.into(), CmpFlag::Geq.into(), 15, 14, 
@@ -1030,9 +1025,9 @@ fn compile_geq(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_leq(){
+fn assemble_leq(){
   // LEQII
-  let p = Compiler::new("leq 4 2", io::stdout()).compile();
+  let p = Assembler::new("leq 4 2", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::Load.into(), EQ as u8, 0, 0, 0, 0, OpCode::Hlt.into()
@@ -1044,7 +1039,7 @@ fn compile_leq(){
   assert_eq!(p.as_slice(), expected);
 
   // LEQRI
-  let p = Compiler::new("leq $14 1", io::stdout()).compile();
+  let p = Assembler::new("leq $14 1", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRI.into(), CmpFlag::Leq.into(), 14, 0, 0, 128, 63, 
@@ -1057,7 +1052,7 @@ fn compile_leq(){
   assert_eq!(p.as_slice(), expected);
 
   // LEQIR
-  let p = Compiler::new("leq 1 $14", io::stdout()).compile();
+  let p = Assembler::new("leq 1 $14", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRI.into(), CmpFlag::Leq.into(), 14, 0, 0, 128, 63,
@@ -1067,7 +1062,7 @@ fn compile_leq(){
   assert_eq!(p.as_slice(), expected);
 
   // LEQRR
-  let p = Compiler::new("leq $15 $14", io::stdout()).compile();
+  let p = Assembler::new("leq $15 $14", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRR.into(), CmpFlag::Leq.into(), 15, 14, 
@@ -1082,9 +1077,9 @@ fn compile_leq(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_gt(){
+fn assemble_gt(){
   // GTII
-  let p = Compiler::new("gt 4 2", io::stdout()).compile();
+  let p = Assembler::new("gt 4 2", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::Load.into(), EQ as u8, 1, 0, 0, 0, 
@@ -1097,7 +1092,7 @@ fn compile_gt(){
   dbg!(&p);
 
   // GTRI
-  let p = Compiler::new("gt $14 1", io::stdout()).compile();
+  let p = Assembler::new("gt $14 1", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRI.into(), CmpFlag::Gt.into(), 14, 0, 0, 128, 63, 
@@ -1109,7 +1104,7 @@ fn compile_gt(){
   dbg!(&p);
 
   // GTIR
-  let p = Compiler::new("gt 1 $14", io::stdout()).compile();
+  let p = Assembler::new("gt 1 $14", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRI.into(), CmpFlag::Gt.into(), 14, 0, 0, 128, 63,
@@ -1123,7 +1118,7 @@ fn compile_gt(){
   assert_eq!(p.as_slice(), expected);
 
   // GTRR
-  let p = Compiler::new("gt $15 $14", io::stdout()).compile();
+  let p = Assembler::new("gt $15 $14", io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 5, 0, 0, 0, // main starts on 5
     OpCode::CmpRR.into(), CmpFlag::Gt.into(), 15, 14, 
@@ -1138,9 +1133,9 @@ fn compile_gt(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_lt(){
+fn assemble_lt(){
   // LTII
-  let p = Compiler::new("LT 2 1", io::stdout()).compile();
+  let p = Assembler::new("LT 2 1", io::stdout()).compile();
   assert_eq!(
     p.as_slice(), 
     [
@@ -1154,7 +1149,7 @@ fn compile_lt(){
   dbg!(&p);
 
   // LTRI
-  let p = Compiler::new("LT $14 1", io::stdout()).compile();
+  let p = Assembler::new("LT $14 1", io::stdout()).compile();
   assert_eq!(
     p.as_slice(),
     [
@@ -1168,7 +1163,7 @@ fn compile_lt(){
     dbg!(&p);    
 
   // LTIR
-  let p = Compiler::new("LT 1 $14 ", io::stdout()).compile();
+  let p = Assembler::new("LT 1 $14 ", io::stdout()).compile();
   assert_eq!(
     p.as_slice(),
     [
@@ -1183,7 +1178,7 @@ fn compile_lt(){
     dbg!(&p);    
 
   // LTRR
-  let p = Compiler::new("LT $15 $14", io::stdout()).compile();
+  let p = Assembler::new("LT $15 $14", io::stdout()).compile();
   assert_eq!(
     p.as_slice(), 
     [
@@ -1199,10 +1194,54 @@ fn compile_lt(){
 
 #[test]
 #[rustfmt::skip]
-fn compile_all_commands() {
-  let src = include_str!("./full_compilation_test.spdr");
-  let p = Compiler::new(src, io::stdout()).compile();
+fn assemble_jmp_with_labels() {
+  let p = Assembler::new("target: ADD $14 $44 $54 JMP target", io::stdout()).compile();
 
+  let expected = [
+    OpCode::Jmp.into(), 5, 0, 0, 0,
+    OpCode::AddRR.into(), 14, 44, 54,
+    OpCode::Jmp.into(), 5, 0, 0, 0,
+    OpCode::Hlt.into()
+  ];
+  
+  assert_eq!(p.as_slice(), expected);
+}
+
+#[test]
+#[rustfmt::skip]
+fn assemble_jnz_with_labels() {
+  let p = Assembler::new("target: ADD $14 $44 $54 JZ $14 target", io::stdout()).compile();
+
+  let expected = [
+    OpCode::Jmp.into(), 5, 0, 0, 0,
+    OpCode::AddRR.into(), 14, 44, 54,
+    OpCode::Jz.into(), 14, 5, 0, 0, 0,
+    OpCode::Hlt.into()
+  ];
+  
+  assert_eq!(p.as_slice(), expected);
+}
+
+#[test]
+#[rustfmt::skip]
+fn assemble_jz_with_labels() {
+  let p = Assembler::new("target: ADD $14 $44 $54 JNZ $14 target", io::stdout()).compile();
+
+  let expected = [
+    OpCode::Jmp.into(), 5, 0, 0, 0,
+    OpCode::AddRR.into(), 14, 44, 54,
+    OpCode::Jnz.into(), 14, 5, 0, 0, 0,
+    OpCode::Hlt.into()
+  ];
+  
+  assert_eq!(p.as_slice(), expected);
+}
+
+#[test]
+#[rustfmt::skip]
+fn assemble_all_commands() {
+  let src = include_str!("./full_compilation_test.spdr");
+  let p = Assembler::new(src, io::stdout()).compile();
   let expected = [
     OpCode::Jmp.into(), 14, 0, 0, 0, // Jump to 14
     // Fn
@@ -1263,6 +1302,11 @@ fn compile_all_commands() {
     OpCode::Noop.into(),
     OpCode::Noop.into(),
     OpCode::Noop.into(),
+    // GOTOS
+    OpCode::Jmp.into(), 1, 0, 0, 0,
+    OpCode::Jnz.into(), 5, 1, 0, 0, 0,
+    OpCode::Jz.into(), 5, 1, 0, 0, 0,
+    // Halt
     OpCode::Hlt.into(),
   ];
 
@@ -1278,7 +1322,7 @@ fn test_script_with_while_loop_compiles() {
   //Testing a while loop
   let src = include_str!("./test_script_while_loop.spdr");
   let mut w = io::stdout();
-  let program = Compiler::new(src, &mut w,).compile();
+  let program = Assembler::new(src, &mut w,).compile();
 
   let loop_var = 9.0f32.to_le_bytes();
 
@@ -1310,7 +1354,7 @@ fn test_script_compiles_with_function_calls() {
   // Testing a function called
   let src = include_str!("./test_script_function.spdr");
   let mut w = io::stdout();
-  let program = Compiler::new(src, &mut w,).compile();
+  let program = Assembler::new(src, &mut w,).compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&program);
@@ -1352,10 +1396,10 @@ fn test_script_compiles_with_external_function() {
   let src = include_str!("./test_external_script_function.spdr");
   let hd = PathBuf::from("./src/test/test_external_script_function.hd",);
 
-  let mut compiler = Compiler::new(src, io::stdout(),);
-  // Upload the header file to the compiler
-  compiler.read_header(hd,);
-  let program = compiler.compile();
+  let mut assembler = Assembler::new(src, io::stdout(),);
+  // Upload the header file to the assembler
+  assembler.read_header(hd,);
+  let program = assembler.compile();
 
   // Check printing the disassembled program does not cause the program to crash
   dbg!(&program);
@@ -1447,14 +1491,14 @@ fn load_and_run_assembled_script() {
 // test
 #[test]
 #[rustfmt::skip]
-fn compile_multiple_functions_when_one_calls_other_before_other_defined(){
-  let mut c = Compiler::new("CALL bar CALL foo FN foo {CALL bar RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar", io::stdout());
-  let p = c.compile();
+fn assemble_multiple_functions_when_one_calls_other_before_other_defined(){
+  let mut a = Assembler::new("CALL bar CALL foo FN foo {CALL bar RET 3} FN bar {POW $67 $64 $75 RET 2} CALL foo CALL bar", io::stdout());
+  let p = a.compile();
   
   // Check the function pointer of `foo` is correct
   let foo_fn_idx = &intern("foo");
   assert_eq!(foo_fn_idx, &1);
-  match c.table.lookup(foo_fn_idx){
+  match a.table().lookup(foo_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [5, 0, 0, 0,]),
     _ => panic!("Should be a function pointer"),
   }
@@ -1462,7 +1506,7 @@ fn compile_multiple_functions_when_one_calls_other_before_other_defined(){
   // Check the function pointer of `bar` is correct
   let bar_fn_idx = &intern("bar");
   assert_eq!(bar_fn_idx, &0);
-  match c.table.lookup(bar_fn_idx){
+  match a.table().lookup(bar_fn_idx){
     Some(VarDecl{ ty: Ty::Function(ptr) }) => assert_eq!(*ptr, [12, 0, 0, 0,]),
     _ => panic!("Should be a function pointer"),
   }
@@ -1489,17 +1533,4 @@ fn compile_multiple_functions_when_one_calls_other_before_other_defined(){
     OpCode::Hlt.into(),
   ];
   assert_eq!(p.as_slice(), expected);
-}
-
-impl<'tcx,> Compiler<'tcx,> {
-  /// Method created to test `self.eat_current_instruction()` works.
-  fn eat_compile(&mut self,) -> Program {
-    // Iterate over each each and interpret it as an opcode
-    while let Some(_,) = self.next_token() {
-      // Match the instruction
-      self.eat_current_instruction();
-    }
-    // Once all lines are compiled return the program
-    return self.main.clone();
-  }
 }

@@ -55,7 +55,7 @@ pub enum Ty {
   /// Registers hold the index of their assigned register
   Register(u8,),
   /// Labels hold the index number the label references.
-  Label(usize,),
+  Label(u32,),
   /// Functions hold the function's address as a `[u8;4]`;
   Function([u8; 4],),
   /// Functions hold the index the VM where stores them in its collection of

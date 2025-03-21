@@ -1,4 +1,3 @@
-use crate::Compiler;
 use eyre::Result;
 use spdr_isa::program::Program;
 use thiserror::Error;
@@ -75,20 +74,5 @@ impl Patch {
     for region in &self.regions {
       program.as_mut_slice()[region.start..region.end].copy_from_slice(&addr,);
     }
-  }
-}
-
-/// This is for handling linking and function defining/calling  
-impl<'tcx,> Compiler<'tcx,> {
-  // Binary layout
-  // 0-4: Jump to `main`
-  // 5-offset: function definitions
-  // offset+: main function
-
-  /// Return the next available address a function can be stored.
-  pub(super) fn next_function_pointer(&self,) -> usize {
-    // Add 4 to account for the displacement caused by the offset information at the
-    // binary's beginning
-    self.main.len() + 5
   }
 }

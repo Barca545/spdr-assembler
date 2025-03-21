@@ -1,11 +1,12 @@
-use crate::{assembler_errors::ASMError, error_printing::print_error, tokenizer::Location, Span};
+use crate::{
+  errors::{ASMError, ErrorPrinter},
+  src_file::SourceFile,
+  tokenizer::{Location, Span},
+};
 use std::io;
 
 #[test]
 fn error_printing_from_raw_input() {
-  let src = include_str!(
-    "C:\\Users\\jamar\\Documents\\Hobbies\\Coding\\spdr-assembler\\src\\test\\spdr_error_test.spdr"
-  );
   let start = Location { idx:8, ln:1, col:9, };
   let end = Location {
     idx:11, ln:1, col:12,
@@ -16,12 +17,14 @@ fn error_printing_from_raw_input() {
     span,
   };
 
+  let source = SourceFile::new_from_path("./src/test/spdr_error_test.spdr",);
+
   let mut w = Vec::new();
-  print_error(&mut w, src, err,);
+  ErrorPrinter::print(&mut w, &source, err,);
 
   let out = String::from_utf8(w,).unwrap();
   let expected = format!(
-      "\x1b[93mUNRECOGNIZED TOKEN:\x1b[0m ';ytx' {} is not a legal token.\nSub $14 ;ytx\n--------\x1b[31m^^^^\x1b[0m\n",
+      "./src/test/spdr_error_test.spdr:1:9:\n\x1b[93mUNRECOGNIZED TOKEN:\x1b[0m ';ytx' {} is not a legal token.\nSub $14 ;ytx\n--------\x1b[31m^^^^\x1b[0m\n",
       span.start
     );
   assert_eq!(out, expected);
@@ -30,7 +33,7 @@ fn error_printing_from_raw_input() {
     token:";ytx".to_string(),
     span,
   };
-  print_error(io::stdout(), src, err,);
+  ErrorPrinter::print(io::stdout(), &source, err,);
 }
 
 #[test]
