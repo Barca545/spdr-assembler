@@ -10,7 +10,7 @@ fn test_skip_whitespace() {
   let src = "
       var test = 18
     ";
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let mut lexer = Lexer::new(source,);
 
   lexer.skip_whitespace();
@@ -22,7 +22,7 @@ fn test_skip_whitespace() {
 fn test_eat_while() {
   let src = "var 90 }";
 
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let mut lex = Lexer::new(source,);
 
   let (wrd, span,) = lex.eat_while(|ch| ch.is_alphanumeric(),);
@@ -47,7 +47,7 @@ fn test_eat_while() {
 fn test_next_token() {
   let src = "var";
 
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let mut lex = Lexer::new(source,);
 
   let token = lex.next_token().unwrap();
@@ -67,7 +67,7 @@ fn test_next_token() {
 #[test]
 fn test_register_annotation() {
   let src = "$15";
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let tokens = Lexer::new(source,).tokenize(io::stdout(),);
   assert_eq!(tokens[0].kind, TokenKind::Register(15));
 }
@@ -76,7 +76,7 @@ fn test_register_annotation() {
 fn test_comments() {
   let src = "// 15, 98, 70 \r\n70";
 
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens.len(), 2);
@@ -88,7 +88,7 @@ fn test_comments() {
 fn test_range() {
   let src = "0..5 0..=17";
 
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Range { start:0, end:4 });
@@ -102,7 +102,7 @@ fn test_range() {
 fn test_numbers() {
   let src = "97.65 5.6";
 
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Num(97.65));
@@ -116,7 +116,7 @@ fn test_numbers() {
 fn test_labels() {
   let src = "label_test:";
 
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Label(intern("label_test")));
@@ -127,7 +127,7 @@ fn test_labels() {
 fn test_tokenize() {
   let src = include_str!("../test/test_tokens.spdr");
 
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let tokens = Lexer::new(source,).tokenize(io::stdout(),);
 
   assert_eq!(tokens[0].kind, TokenKind::Var);
@@ -200,7 +200,7 @@ fn test_tokenize() {
 #[test]
 fn tokenizer_errors_print() {
   let src = include_str!("../../src/test/spdr_error_test.spdr");
-  let source = &SourceFile::new_from_raw(src,);
+  let source = &SourceFile::new_from_str(src,);
   let mut lex = Lexer::new(source,);
   let mut out = Vec::new();
   let _ = lex.tokenize(&mut out,);

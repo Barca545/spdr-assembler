@@ -1,7 +1,7 @@
 use crate::{
+  assembler::Assembler,
   interner::intern,
   symbol_table::{Ty, VarDecl},
-  Assembler,
 };
 use spdr_isa::{
   opcodes::{CmpFlag, OpCode},

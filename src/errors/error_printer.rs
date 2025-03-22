@@ -1,5 +1,5 @@
 use crate::{errors::ASMError, src_file::SourceFile};
-use std::{io::Write, process};
+use std::{fmt::Display, io::Write, process};
 
 // Refactor:
 // - Figure out if there is a more robust way to print the arrow by using the
@@ -11,10 +11,19 @@ impl ErrorPrinter {
   // Needs to take a more generic error so it can print errors that arent for the
   // assembler
 
-  /// Prints the error message and exits the process instead of panicking
+  /// Prints the error message and exits the process instead of panicking.
   pub(crate) fn graceful_exit<W,>(w:W, src:&SourceFile, err:ASMError,) -> !
   where W: Write {
     Self::print(w, src, err,);
+    process::exit(0,)
+  }
+
+  /// A function used for erroring in stages before a [`SourceFile`] has been
+  /// created. This mostly means during the creation of
+  /// [`AssemblerBuilder`](crate::assembler::AssemblerBuilder) and the parsing
+  /// of CLI [`AppArgs`](crate::cli_integration::AppArgs).
+  pub(crate) fn graceful_exit_early<E:Display,>(err:E,) -> ! {
+    println!("\x1b[93m{}\x1b[0m", err);
     process::exit(0,)
   }
 

@@ -1,11 +1,10 @@
 use crate::cli_integration::Config;
-use std::{env::current_dir, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 
-const TEST_CONFIG_FILE_PATH:&str = "./src/test/config.toml";
+const TEST_CONFIG_FILE_PATH:&str = "./src/test/test_config.toml";
 
 #[test]
 fn update_config_file() {
-  dbg!(current_dir().unwrap());
   // Get the config file
   let mut config = toml::from_str::<Config,>(&fs::read_to_string(TEST_CONFIG_FILE_PATH,).unwrap(),).unwrap();
 

@@ -33,10 +33,6 @@ pub enum ASMError<'e,> {
   NotRegisterOrIdent { token:Token, },
   #[error("\x1b[93mNOT RANGE:\x1b[0m {} {} is not a range.", token.kind, token.span.start)]
   NotRange { token:Token, },
-  #[error(
-    "\x1b[93mINVALID CONDITION:\x1b[0m A condition must be either a Gt, Geq, Lt, Leq, or a Bool token not a {0} token."
-  )]
-  NotEquality(TokenKind,),
   #[error("\x1b[93mNOT FUNCTION:\x1b[0m Expected identity to be a function; {0} is not a function.")]
   NotFunction(Ty,),
   #[error("\x1b[93mUNAVAILABLE FUNCTION NAME:\x1b[0m The name {name} {} is already in use.", span.start)]
@@ -69,7 +65,6 @@ impl<'e,> ASMError<'e,> {
       ASMError::NoNameCall { token, .. } => token.span,
       ASMError::NotRegisterOrIdent { token, .. } => token.span,
       ASMError::NotRange { token, } => token.span,
-      ASMError::NotEquality(..,) => todo!(),
       ASMError::NotFunction(..,) => todo!(),
       ASMError::UnavailableFunctionName { span, .. } => *span,
       ASMError::UnregistedSyscall { span, .. } => *span,

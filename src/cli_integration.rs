@@ -3,6 +3,8 @@ use pico_args::Arguments;
 use serde::{Deserialize, Serialize};
 use std::{ffi::OsStr, fs, path::PathBuf};
 
+use crate::errors::ErrorPrinter;
+
 /// Help message for the Assembler. Loosely modeled on [docopt](http://docopt.org/).
 const HELP:&str = "\
 USAGE:
@@ -12,18 +14,16 @@ FLAGS:
   -h, --help                   Prints help information.
   -v, --version                Prints assembler version information.
   -d, --defaults               Display any assember defaults.
+  -p, --print                  Prints the output assembly when completed.
 
 
 OPTIONS:
   --name STRING                Declares the name of the file.
-  --input PATH                 Specifies the path of the file to compile. 
-  --header PATH                Sets a header file for a compilation run.   
-  --output PATH                Sets a specific output path [default: exe root directory].
+  --input PATH                 Specify the file to assemble. 
+  --str STRING                 Provide a string of spdr macroassembly to the Assembler.
+  --header PATH                Specify a header file.  
+  --output PATH                Specify an output path.
   --update-output PATH         Updates the default output path.
-
-
-ARGS:
-  <INPUT>
 ";
 
 pub(crate) const CONFIG_FILE_PATH:&str = "./src/config.toml";
@@ -34,7 +34,9 @@ pub struct AppArgs {
   /// User provided filename.
   pub(crate) name:String,
   /// User provided path to the source code.
-  pub(crate) path:PathBuf,
+  pub(crate) path:Option<PathBuf,>,
+  /// User provided ASM string.
+  pub(crate) str:Option<String,>,
   /// A header file describing any external functions the source code can call.
   pub(crate) header:Option<PathBuf,>,
   /// Folder to place the compiled binary.
@@ -69,7 +71,13 @@ pub fn parse_arguments() -> Result<AppArgs,> {
   let mut pargs = Arguments::from_env();
 
   // Get the config file
-  let mut config = toml::from_str::<Config,>(&fs::read_to_string(CONFIG_FILE_PATH,).unwrap(),).unwrap();
+  let raw_config = match fs::read_to_string(CONFIG_FILE_PATH,) {
+    Ok(config,) => config,
+    Err(_,) => {
+      ErrorPrinter::graceful_exit_early(format!("config.toml was not found in {}", CONFIG_FILE_PATH),)
+    }
+  };
+  let mut config = toml::from_str::<Config,>(&raw_config,).unwrap();
 
   // Help has a higher priority and should be handled separately.
   if pargs.contains(["-h", "--help",],) {
@@ -110,10 +118,23 @@ pub fn parse_arguments() -> Result<AppArgs,> {
   // Get the path. Print the error then print the HELP message if getting the path
   // fails.
   // TODO: Print the HELP message too, atm this will only print the error message
-  let path = pargs
-    .opt_value_from_os_str("--path", parse_path,)
-    .unwrap()
-    .unwrap();
+  let path = match pargs.opt_value_from_os_str("--path", parse_path,) {
+    Ok(path,) => path,
+    Err(err,) => {
+      println!("{}", HELP);
+      ErrorPrinter::graceful_exit_early(err,);
+    }
+  };
+
+  // Also print the HELP message if this fails
+  let str = match pargs.opt_value_from_str("--str",) {
+    Ok(str,) => str,
+    Err(err,) => {
+      println!("{}", HELP);
+      ErrorPrinter::graceful_exit_early(err,);
+    }
+  };
+
   let name = pargs.value_from_str("--name",).unwrap();
 
   let header = pargs.opt_value_from_os_str("--header", parse_path,)?;
@@ -124,6 +145,7 @@ pub fn parse_arguments() -> Result<AppArgs,> {
     .unwrap_or(PathBuf::from(config.information.output,),);
 
   Ok(AppArgs {
+    str,
     path,
     name,
     header,
